@@ -17,7 +17,17 @@ class Library:
 
 
 class Employee:
-    def __init__(self, first_name, last_name, hire_date, birth_date, city, street, zip_code, phone):
+    def __init__(
+        self,
+        first_name,
+        last_name,
+        hire_date,
+        birth_date,
+        city,
+        street,
+        zip_code,
+        phone,
+    ):
         self.first_name = first_name
         self.last_name = last_name
         self.hire_date = hire_date
@@ -30,13 +40,16 @@ class Employee:
     def __str__(self):
         return (
             f"Employee: {self.first_name} {self.last_name}, born {self.birth_date}, "
-            f"hired {self.hire_date}, address: {self.street}, {self.zip_code} {self.city}, "
+            f"hired {self.hire_date}, "
+            f"address: {self.street}, {self.zip_code} {self.city}, "
             f"phone {self.phone}"
         )
 
 
 class Book:
-    def __init__(self, library, publication_date, author_name, author_surname, number_of_pages):
+    def __init__(
+        self, library, publication_date, author_name, author_surname, number_of_pages
+    ):
         self.library = library
         self.publication_date = publication_date
         self.author_name = author_name
@@ -45,7 +58,8 @@ class Book:
 
     def __str__(self):
         return (
-            f"Book by {self.author_name} {self.author_surname}, published {self.publication_date}, "
+            f"Book by {self.author_name} {self.author_surname}, "
+            f"published {self.publication_date}, "
             f"{self.number_of_pages} pages\n    {self.library}"
         )
 
@@ -80,9 +94,36 @@ if __name__ == "__main__":
     ]
 
     employees = [
-        Employee("Jan", "Kowalski", "2015-03-01", "1980-05-12", "Krakow", "Green Street 3", "30-002", "111-222-333"),
-        Employee("Maria", "Nowak", "2019-09-15", "1990-11-23", "Warsaw", "Short Street 7", "00-951", "444-555-666"),
-        Employee("Piotr", "Wisniewski", "2021-01-10", "1995-02-02", "Krakow", "Oak Street 12", "30-003", "777-888-999"),
+        Employee(
+            "Jan",
+            "Kowalski",
+            "2015-03-01",
+            "1980-05-12",
+            "Krakow",
+            "Green Street 3",
+            "30-002",
+            "111-222-333",
+        ),
+        Employee(
+            "Maria",
+            "Nowak",
+            "2019-09-15",
+            "1990-11-23",
+            "Warsaw",
+            "Short Street 7",
+            "00-951",
+            "444-555-666",
+        ),
+        Employee(
+            "Piotr",
+            "Wisniewski",
+            "2021-01-10",
+            "1995-02-02",
+            "Krakow",
+            "Oak Street 12",
+            "30-003",
+            "777-888-999",
+        ),
     ]
 
     students = [
