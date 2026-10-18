@@ -1,15 +1,15 @@
-def pomnoz_for(liczby):
-    wynik = []
-    for liczba in liczby:
-        wynik.append(liczba * 2)
-    return wynik
+def double_with_for(numbers):
+    result = []
+    for number in numbers:
+        result.append(number * 2)
+    return result
 
 
-def pomnoz_lista_skladana(liczby):
-    return [liczba * 2 for liczba in liczby]
+def double_with_comprehension(numbers):
+    return [number * 2 for number in numbers]
 
 
 if __name__ == "__main__":
-    liczby = [1, 2, 3, 4, 5]
-    print(pomnoz_for(liczby))
-    print(pomnoz_lista_skladana(liczby))
+    numbers = [1, 2, 3, 4, 5]
+    print(double_with_for(numbers))
+    print(double_with_comprehension(numbers))

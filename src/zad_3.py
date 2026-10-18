@@ -1,8 +1,8 @@
-def wyswietl_parzyste(liczby):
-    for liczba in liczby:
-        if liczba % 2 == 0:
-            print(liczba)
+def print_even(numbers):
+    for number in numbers:
+        if number % 2 == 0:
+            print(number)
 
 
 if __name__ == "__main__":
-    wyswietl_parzyste(list(range(1, 11)))
+    print_even(list(range(1, 11)))

@@ -1,7 +1,7 @@
-def wyswietl_imiona(imiona):
-    for imie in imiona:
-        print(imie)
+def print_names(names):
+    for name in names:
+        print(name)
 
 
 if __name__ == "__main__":
-    wyswietl_imiona(["Anna", "Jan", "Kasia", "Piotr", "Ola"])
+    print_names(["Anna", "John", "Kate", "Peter", "Olivia"])

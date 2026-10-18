@@ -1,7 +1,7 @@
-def wyswietl_co_drugi(liczby):
-    for liczba in liczby[::2]:
-        print(liczba)
+def print_every_second(numbers):
+    for number in numbers[::2]:
+        print(number)
 
 
 if __name__ == "__main__":
-    wyswietl_co_drugi(list(range(1, 11)))
+    print_every_second(list(range(1, 11)))
