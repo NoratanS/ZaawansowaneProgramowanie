@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: uv run black
+        language: unsupported
+        types: [python]
+
+      - id: pycodestyle
+        name: pycodestyle
+        entry: uv run pycodestyle
+        language: unsupported
+        types: [python]
