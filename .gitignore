@@ -218,3 +218,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Custom
+HELPER.md
+
+# Editors
+.vscode/
+.idea/
+
+# OS junk (Windows/WSL/macOS)
+*:Zone.Identifier
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Agent / local docs
+.scratch/
+CLAUDE.md
+docs/
