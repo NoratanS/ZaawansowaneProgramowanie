@@ -233,6 +233,7 @@ desktop.ini
 .DS_Store
 
 # Agent / local docs
+learning/
 .scratch/
 CLAUDE.md
 docs/
