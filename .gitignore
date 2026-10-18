@@ -237,3 +237,6 @@ learning/
 .scratch/
 CLAUDE.md
 docs/
+
+# queues_on_files runtime data
+src/queues_on_files/queue.*
