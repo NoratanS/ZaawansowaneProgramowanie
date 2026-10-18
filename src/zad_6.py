@@ -1,6 +1,6 @@
 def merge_unique_cubed(first: list[int], second: list[int]) -> list[int]:
     unique = dict.fromkeys(first + second)  # removes duplicates, keeps order
-    return [x ** 3 for x in unique]
+    return [x**3 for x in unique]
 
 
 if __name__ == "__main__":

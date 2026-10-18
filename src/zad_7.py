@@ -42,7 +42,9 @@ def fetch_breweries(per_page: int = 20, city: str | None = None) -> list[Brewery
     if city:
         params["by_city"] = city
     # The API returns 403 for Python's default User-Agent
-    request = Request(f"{API_URL}?{urlencode(params)}", headers={"User-Agent": "brewery-script"})
+    request = Request(
+        f"{API_URL}?{urlencode(params)}", headers={"User-Agent": "brewery-script"}
+    )
     with urlopen(request) as response:
         data = json.load(response)
     return [Brewery(**item) for item in data]
