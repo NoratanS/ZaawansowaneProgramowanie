@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey
+from sqlalchemy import JSON, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -41,3 +41,13 @@ class Tag(Base):
     movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"), primary_key=True)
     tag: Mapped[str] = mapped_column(primary_key=True)
     timestamp: Mapped[int]
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(unique=True)
+    password_hash: Mapped[str]
+    # A list of role names, e.g. ["ROLE_ADMIN"], stored as a JSON array.
+    roles: Mapped[list[str]] = mapped_column(JSON, default=list)

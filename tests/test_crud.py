@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from python_api.auth import create_access_token
 from python_api.database import get_session
 from python_api.main import app
 from python_api.models import Base, Link, Movie, Rating, Tag
@@ -59,7 +60,9 @@ def client(engine):
             yield session
 
     app.dependency_overrides[get_session] = get_test_session
-    yield TestClient(app)
+    # All endpoints need a token; any valid one will do for these tests.
+    token = create_access_token("tester", roles=[])
+    yield TestClient(app, headers={"Authorization": f"Bearer {token}"})
     app.dependency_overrides.clear()
 
 

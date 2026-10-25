@@ -42,3 +42,12 @@ class TagCreate(TagUpdate):
     user_id: int
     movie_id: int
     tag: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserCreate(LoginRequest):
+    roles: list[str] = []
