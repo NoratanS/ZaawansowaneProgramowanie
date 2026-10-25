@@ -22,4 +22,4 @@ line-length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "src/queues_on_sqlite"]

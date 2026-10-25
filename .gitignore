@@ -237,3 +237,6 @@ learning/
 .scratch/
 CLAUDE.md
 docs/
+
+# queues_on_sqlite runtime data
+src/queues_on_sqlite/queue.db*
