@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 import aio_pika
@@ -5,7 +6,7 @@ import httpx
 import pytest
 
 from analysis_service.api import create_app
-from analysis_service.settings import AnalysisApiSettings
+from analysis_service.settings import AnalysisApiSettings, WorkerSettings
 
 
 @pytest.fixture
@@ -17,13 +18,12 @@ async def channel(rabbitmq_url):
 
 @pytest.fixture
 async def clean_broker(channel, rabbitmq_url):
-    """Delete the jobs queue topology so each test's app declares it afresh."""
-    jobs = AnalysisApiSettings(
-        rabbitmq_url=rabbitmq_url, results_public_url="http://results.example"
-    ).jobs_queue
-    await channel.queue_delete(jobs.name)
-    await channel.queue_delete(jobs.dlq)
-    await channel.exchange_delete(jobs.dlx)
+    """Delete every queue topology so each test's app declares it afresh."""
+    settings = WorkerSettings(rabbitmq_url=rabbitmq_url)
+    for config in (settings.jobs_queue, settings.results_queue):
+        await channel.queue_delete(config.name)
+        await channel.queue_delete(config.dlq)
+        await channel.exchange_delete(config.dlx)
 
 
 @pytest.fixture
@@ -64,3 +64,17 @@ def drain(channel):
         return messages
 
     return take_all
+
+
+@pytest.fixture
+def next_message(channel):
+    """Wait for the next message on a queue and take it."""
+
+    async def take(queue_name, timeout=5):
+        queue = await channel.get_queue(queue_name)
+        async with asyncio.timeout(timeout):
+            while (message := await queue.get(no_ack=True, fail=False)) is None:
+                await asyncio.sleep(0.02)
+        return message
+
+    return take

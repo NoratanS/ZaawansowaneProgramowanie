@@ -6,16 +6,15 @@ from uuid import UUID, uuid4
 
 from aiormq.exceptions import AMQPError, ChannelInvalidStateError
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from faststream.rabbit import RabbitBroker
-from faststream.rabbit.schemas import Channel
 from pydantic import BaseModel, HttpUrl
 
 from analysis_service.messages import AnalysisJob
-from analysis_service.queues import declare_queue
+from analysis_service.queues import (
+    confirming_broker,
+    declare_queue,
+    publish_confirmed,
+)
 from analysis_service.settings import AnalysisApiSettings
-
-# How long a request waits for the broker to confirm the publish.
-PUBLISH_TIMEOUT_SECONDS = 5.0
 
 
 class AnalysisRequest(BaseModel):
@@ -33,11 +32,8 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # on_return_raises turns an unroutable publish into an error, so a
-        # missing queue gives 503 instead of a 202 for a lost job.
-        broker = RabbitBroker(
-            settings.rabbitmq_url, default_channel=Channel(on_return_raises=True)
-        )
+        # A missing queue gives 503 instead of a 202 for a lost job.
+        broker = confirming_broker(settings.rabbitmq_url)
         await broker.start()
         try:
             await declare_queue(broker, jobs_queue)
@@ -66,12 +62,11 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
             requested_at=datetime.now(UTC),
         )
         try:
-            await request.app.state.broker.publish(
+            await publish_confirmed(
+                request.app.state.broker,
                 job,
                 queue=jobs_queue.name,
-                persist=True,
                 message_id=str(job.job_id),
-                timeout=PUBLISH_TIMEOUT_SECONDS,
             )
         except (
             AMQPError,  # returned (unroutable) or nacked by the broker
