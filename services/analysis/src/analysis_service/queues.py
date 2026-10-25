@@ -38,9 +38,8 @@ def _ms(seconds: float) -> int:
 
 
 def queue_arguments(config: QueueConfig) -> dict[str, Any]:
-    """The declaration arguments of a work queue."""
+    """A work queue's declaration arguments; ``RabbitQueue`` adds its type."""
     return {
-        "x-queue-type": "quorum",
         # Delay only redeliveries that count as failed (reject, crash).
         "x-delayed-retry-type": "failed",
         "x-delayed-retry-min": _ms(config.retry_min_seconds),

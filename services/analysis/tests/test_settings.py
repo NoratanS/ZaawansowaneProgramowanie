@@ -10,11 +10,16 @@ REQUIRED = {
     "RABBITMQ_URL": "amqp://guest:guest@rabbitmq:5672/",
     "RESULTS_PUBLIC_URL": "http://localhost:8001",
 }
+KNOBS = [
+    "JOBS_QUEUE_RETRY_MIN_SECONDS",
+    "JOBS_QUEUE_RETRY_MAX_SECONDS",
+    "JOBS_QUEUE_DELIVERY_LIMIT",
+]
 
 
 @pytest.fixture
 def env(monkeypatch):
-    for name in [*REQUIRED, "JOBS_QUEUE_DELIVERY_LIMIT"]:
+    for name in [*REQUIRED, *KNOBS]:
         monkeypatch.delenv(name, raising=False)
     for name, value in REQUIRED.items():
         monkeypatch.setenv(name, value)
@@ -61,3 +66,10 @@ def test_results_public_url_must_be_http(env):
 def test_retry_delays_must_be_positive(env):
     with pytest.raises(ValidationError, match="jobs_queue_retry_min_seconds"):
         AnalysisApiSettings(jobs_queue_retry_min_seconds=0)
+
+
+def test_retry_min_must_not_exceed_retry_max(env):
+    with pytest.raises(ValidationError, match="must not exceed"):
+        AnalysisApiSettings(
+            jobs_queue_retry_min_seconds=60, jobs_queue_retry_max_seconds=30
+        )

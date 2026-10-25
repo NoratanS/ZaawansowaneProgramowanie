@@ -3,9 +3,9 @@
 Each entrypoint has one settings class, built from the shared pieces below.
 """
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field, HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings
 
 from analysis_service.queues import QueueConfig
@@ -24,6 +24,15 @@ class JobsQueueSettings(BaseSettings):
     jobs_queue_retry_min_seconds: Seconds = 2
     jobs_queue_retry_max_seconds: Seconds = 30
     jobs_queue_delivery_limit: Limit = 3
+
+    @model_validator(mode="after")
+    def _retry_min_not_above_max(self) -> Self:
+        if self.jobs_queue_retry_min_seconds > self.jobs_queue_retry_max_seconds:
+            raise ValueError(
+                "jobs_queue_retry_min_seconds must not exceed"
+                " jobs_queue_retry_max_seconds"
+            )
+        return self
 
     @property
     def jobs_queue(self) -> QueueConfig:

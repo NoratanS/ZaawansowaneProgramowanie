@@ -14,7 +14,6 @@ JOBS = QueueConfig(
 
 def test_jobs_queue_arguments_match_the_spec_defaults():
     assert queue_arguments(JOBS) == {
-        "x-queue-type": "quorum",
         "x-delayed-retry-type": "failed",
         "x-delayed-retry-min": 2000,
         "x-delayed-retry-max": 30000,
