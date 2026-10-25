@@ -1,0 +1,12 @@
+[project]
+name = "results-service"
+version = "0.1.0"
+description = "Results Service for the People Counter"
+requires-python = ">=3.15"
+dependencies = [
+    "asyncpg>=0.31",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
