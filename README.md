@@ -21,3 +21,19 @@ uv run black .               # format code
 uv run pycodestyle .         # check style
 uv run pre-commit run --all-files   # run all hooks on e
 ```
+
+## Tests
+
+The repo is a uv workspace with two services in `services/`. Run one test tier
+at a time from the repo root:
+
+```bash
+uv run pytest -m unit          # pure logic, no I/O
+uv run pytest -m integration   # real Postgres + RabbitMQ (needs Docker)
+uv run pytest -m e2e           # full compose stack
+uv run pytest -m model         # the real YOLOX model on a fixture photo
+```
+
+Nothing needs to be started first. Integration tests start throwaway
+`postgres:18` and `rabbitmq:4.3-management` containers on random ports and
+remove them when the run ends.
