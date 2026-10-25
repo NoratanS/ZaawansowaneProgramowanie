@@ -180,6 +180,15 @@ def _failed_with_id(n):
     return {**FAILED_RESULT, "job_id": f"00000000-0000-4000-8000-{n:012d}"}
 
 
+async def _store_all_at_the_same_moment(database_url):
+    dsn = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    connection = await asyncpg.connect(dsn)
+    try:
+        await connection.execute("UPDATE results SET stored_at = now()")
+    finally:
+        await connection.close()
+
+
 async def _put_all(client, bodies):
     for body in bodies:
         response = await client.put(f"/results/{body['job_id']}", json=body)
@@ -199,6 +208,17 @@ async def test_list_is_newest_stored_first_and_includes_failed(client):
     response = await client.get("/results")
 
     assert response.json() == [FAILED_RESULT, SUCCEEDED]
+
+
+async def test_list_breaks_stored_at_ties_by_job_id(client, database_url):
+    first, second, third = (_failed_with_id(n) for n in range(3))
+    # Neither the insertion order nor its reverse matches job_id order.
+    await _put_all(client, [third, first, second])
+    await _store_all_at_the_same_moment(database_url)
+
+    response = await client.get("/results")
+
+    assert response.json() == [first, second, third]
 
 
 async def test_list_pages_with_limit_and_offset(client):
