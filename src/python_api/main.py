@@ -1,22 +1,16 @@
-import csv
-from pathlib import Path
+from typing import Annotated
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from python_api.database import get_session
 from python_api.models import Link, Movie, Rating, Tag
-
-DATA_DIR = Path(__file__).parent / "data"
 
 app = FastAPI()
 
-
-def read_rows(file_name: str) -> list[list[str]]:
-    """Return the rows of a CSV file from the data folder, without the header."""
-    with open(DATA_DIR / file_name, newline="", encoding="utf-8") as file:
-        reader = csv.reader(file)
-        next(reader)
-        return list(reader)
+SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @app.get("/")
@@ -25,27 +19,27 @@ def hello() -> dict:
 
 
 @app.get("/movies")
-def get_movies() -> list[dict]:
-    movies = [Movie(*row) for row in read_rows("movies.csv")]
-    return [movie.__dict__ for movie in movies]
+def get_movies(session: SessionDep) -> list[dict]:
+    movies = session.scalars(select(Movie).order_by(Movie.id))
+    return [movie.to_dict() for movie in movies]
 
 
 @app.get("/links")
-def get_links() -> list[dict]:
-    links = [Link(*row) for row in read_rows("links.csv")]
-    return [link.__dict__ for link in links]
+def get_links(session: SessionDep) -> list[dict]:
+    links = session.scalars(select(Link).order_by(Link.movie_id))
+    return [link.to_dict() for link in links]
 
 
 @app.get("/ratings")
-def get_ratings() -> list[dict]:
-    ratings = [Rating(*row) for row in read_rows("ratings.csv")]
-    return [rating.__dict__ for rating in ratings]
+def get_ratings(session: SessionDep) -> list[dict]:
+    ratings = session.scalars(select(Rating).order_by(Rating.user_id, Rating.movie_id))
+    return [rating.to_dict() for rating in ratings]
 
 
 @app.get("/tags")
-def get_tags() -> list[dict]:
-    tags = [Tag(*row) for row in read_rows("tags.csv")]
-    return [tag.__dict__ for tag in tags]
+def get_tags(session: SessionDep) -> list[dict]:
+    tags = session.scalars(select(Tag).order_by(Tag.user_id, Tag.movie_id, Tag.tag))
+    return [tag.to_dict() for tag in tags]
 
 
 if __name__ == "__main__":
