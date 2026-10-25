@@ -24,6 +24,12 @@ class QueueConfig:
     retry_max_seconds: float
     delivery_limit: int
 
+    def __post_init__(self) -> None:
+        if self.retry_min_seconds > self.retry_max_seconds:
+            raise ValueError(
+                f"{self.name}: retry_min_seconds must not exceed retry_max_seconds"
+            )
+
     @property
     def dlx(self) -> str:
         return f"{self.name}.dlx"

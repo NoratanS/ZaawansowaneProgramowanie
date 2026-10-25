@@ -26,12 +26,9 @@ class JobsQueueSettings(BaseSettings):
     jobs_queue_delivery_limit: Limit = 3
 
     @model_validator(mode="after")
-    def _retry_min_not_above_max(self) -> Self:
-        if self.jobs_queue_retry_min_seconds > self.jobs_queue_retry_max_seconds:
-            raise ValueError(
-                "jobs_queue_retry_min_seconds must not exceed"
-                " jobs_queue_retry_max_seconds"
-            )
+    def _jobs_queue_is_valid(self) -> Self:
+        # Fail at startup, not on first use; QueueConfig owns the rules.
+        self.jobs_queue
         return self
 
     @property
@@ -48,3 +45,8 @@ class AnalysisApiSettings(BrokerSettings, JobsQueueSettings):
     """Analysis Service HTTP API settings."""
 
     results_public_url: HttpUrl
+
+    @property
+    def results_base_url(self) -> str:
+        """``results_public_url`` without the trailing slash ``HttpUrl`` may add."""
+        return str(self.results_public_url).rstrip("/")

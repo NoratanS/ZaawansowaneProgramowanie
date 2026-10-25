@@ -28,7 +28,8 @@ class AnalysisAccepted(BaseModel):
 
 
 def create_app(settings: AnalysisApiSettings) -> FastAPI:
-    results_base_url = str(settings.results_public_url).rstrip("/")
+    results_base_url = settings.results_base_url
+    jobs_queue = settings.jobs_queue
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -39,7 +40,7 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
         )
         await broker.start()
         try:
-            await declare_queue(broker, settings.jobs_queue)
+            await declare_queue(broker, jobs_queue)
             app.state.broker = broker
             yield
         finally:
@@ -67,7 +68,7 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
         try:
             await request.app.state.broker.publish(
                 job,
-                queue=settings.jobs_queue.name,
+                queue=jobs_queue.name,
                 persist=True,
                 message_id=str(job.job_id),
                 timeout=PUBLISH_TIMEOUT_SECONDS,

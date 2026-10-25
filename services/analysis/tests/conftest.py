@@ -16,11 +16,14 @@ async def channel(rabbitmq_url):
 
 
 @pytest.fixture
-async def clean_broker(channel):
+async def clean_broker(channel, rabbitmq_url):
     """Delete the jobs queue topology so each test's app declares it afresh."""
-    await channel.queue_delete("analysis-jobs")
-    await channel.queue_delete("analysis-jobs.dlq")
-    await channel.exchange_delete("analysis-jobs.dlx")
+    jobs = AnalysisApiSettings(
+        rabbitmq_url=rabbitmq_url, results_public_url="http://results.example"
+    ).jobs_queue
+    await channel.queue_delete(jobs.name)
+    await channel.queue_delete(jobs.dlq)
+    await channel.exchange_delete(jobs.dlx)
 
 
 @pytest.fixture

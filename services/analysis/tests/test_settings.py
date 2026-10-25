@@ -19,7 +19,7 @@ KNOBS = [
 
 @pytest.fixture
 def env(monkeypatch):
-    for name in [*REQUIRED, *KNOBS]:
+    for name in KNOBS:
         monkeypatch.delenv(name, raising=False)
     for name, value in REQUIRED.items():
         monkeypatch.setenv(name, value)
@@ -38,7 +38,7 @@ def test_required_settings_come_from_the_environment(env):
     settings = AnalysisApiSettings()
 
     assert settings.rabbitmq_url == "amqp://guest:guest@rabbitmq:5672/"
-    assert str(settings.results_public_url).startswith("http://localhost:8001")
+    assert settings.results_base_url == "http://localhost:8001"
 
 
 def test_jobs_queue_defaults_follow_the_spec(env):
