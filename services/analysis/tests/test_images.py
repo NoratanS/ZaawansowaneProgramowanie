@@ -15,12 +15,8 @@ pytestmark = pytest.mark.unit
 URL = "http://images.example/people.jpg"
 
 
-def client_answering(handler):
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-
 async def fetch(handler, *, timeout_seconds=1.0, max_bytes=100):
-    async with client_answering(handler) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         return await fetch_image(
             client, URL, timeout_seconds=timeout_seconds, max_bytes=max_bytes
         )
@@ -135,6 +131,17 @@ def test_undecodable_bytes_are_not_an_image(data):
     assert failure.value.code == "not_an_image"
 
 
+def run_python(script, env):
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return run.stdout.strip()
+
+
 def decode_in_fresh_process(env):
     # OpenCV reads the pixel cap once at import, so each case needs its own process.
     script = (
@@ -146,14 +153,7 @@ def decode_in_fresh_process(env):
         "except ImageFailure as failure:\n"
         "    print(failure.code)\n"
     )
-    run = subprocess.run(
-        [sys.executable, "-c", script],
-        env={**os.environ, **env},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return run.stdout.strip()
+    return run_python(script, {**os.environ, **env})
 
 
 def test_an_image_over_the_pixel_cap_is_too_large():
@@ -170,16 +170,7 @@ def test_an_image_under_the_pixel_cap_decodes():
 
 def test_the_package_sets_a_default_pixel_cap():
     env = {k: v for k, v in os.environ.items() if k != "OPENCV_IO_MAX_IMAGE_PIXELS"}
-    run = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import os, analysis_service\n"
-            "print(os.environ['OPENCV_IO_MAX_IMAGE_PIXELS'])",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
+    script = (
+        "import os, analysis_service\nprint(os.environ['OPENCV_IO_MAX_IMAGE_PIXELS'])"
     )
-    assert run.stdout.strip() == "50000000"
+    assert run_python(script, env) == "50000000"

@@ -11,19 +11,21 @@ from typing import Any
 
 import httpx
 from faststream import AckPolicy, FastStream
-from faststream.rabbit import QueueType, RabbitBroker, RabbitQueue
+from faststream.rabbit import QueueType, RabbitQueue
 from faststream.rabbit.annotations import RabbitMessage
 from faststream.rabbit.schemas import Channel
 
 from analysis_service.detector import Detect, Detection, detect_nobody
 from analysis_service.images import ImageFailure, decode_image, fetch_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
-from analysis_service.queues import declare_queue
+from analysis_service.queues import (
+    confirming_broker,
+    declare_queue,
+    publish_confirmed,
+)
 from analysis_service.settings import WorkerSettings
 
 MODEL = "yolox-s"
-# How long the Worker waits for the broker to confirm a Result.
-PUBLISH_TIMEOUT_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,7 @@ logger = logging.getLogger(__name__)
 def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     jobs_queue = settings.jobs_queue
     results_queue = settings.results_queue
-    # on_return_raises makes an unroutable Result a failed publish.
-    broker = RabbitBroker(
-        settings.rabbitmq_url, default_channel=Channel(on_return_raises=True)
-    )
+    broker = confirming_broker(settings.rabbitmq_url)
     # No per-operation timeout: fetch_image enforces the total limit itself,
     # and httpx's 5 s default would cut it short when the limit is longer.
     http = httpx.AsyncClient(timeout=None)
@@ -91,13 +90,8 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         try:
             job = AnalysisJob.model_validate_json(message.body)
             result = await analyse(job)
-            # Waits for the publisher confirm; a nack or return raises.
-            await broker.publish(
-                result,
-                queue=results_queue.name,
-                persist=True,
-                message_id=str(job.job_id),
-                timeout=PUBLISH_TIMEOUT_SECONDS,
+            await publish_confirmed(
+                broker, result, queue=results_queue.name, message_id=str(job.job_id)
             )
         except Exception:
             # reject, not nack: only reject counts toward the delivery limit,
@@ -113,10 +107,14 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
 
 def _to_box(detection: Detection, width: int, height: int) -> Box | None:
     """Clip a detection to the image and round it; ``None`` if nothing is left."""
-    left = round(min(max(detection.x, 0), width))
-    top = round(min(max(detection.y, 0), height))
-    right = round(min(max(detection.x + detection.width, 0), width))
-    bottom = round(min(max(detection.y + detection.height, 0), height))
+
+    def clip(value: float, limit: int) -> int:
+        return round(min(max(value, 0), limit))
+
+    left = clip(detection.x, width)
+    top = clip(detection.y, height)
+    right = clip(detection.x + detection.width, width)
+    bottom = clip(detection.y + detection.height, height)
     if right <= left or bottom <= top:
         return None
     return Box(

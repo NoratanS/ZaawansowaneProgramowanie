@@ -6,17 +6,8 @@ from analysis_service.settings import WorkerSettings
 
 pytestmark = pytest.mark.unit
 
-KNOBS = [
-    "JOBS_QUEUE_RETRY_MIN_SECONDS",
-    "JOBS_QUEUE_RETRY_MAX_SECONDS",
-    "JOBS_QUEUE_DELIVERY_LIMIT",
-    "RESULTS_QUEUE_RETRY_MIN_SECONDS",
-    "RESULTS_QUEUE_RETRY_MAX_SECONDS",
-    "RESULTS_QUEUE_DELIVERY_LIMIT",
-    "IMAGE_FETCH_TIMEOUT_SECONDS",
-    "IMAGE_MAX_BYTES",
-    "WORKER_PREFETCH",
-]
+# Every optional setting, so the developer's own env can't leak into defaults.
+KNOBS = [name.upper() for name in WorkerSettings.model_fields if name != "rabbitmq_url"]
 
 
 @pytest.fixture
@@ -41,12 +32,7 @@ def test_defaults_follow_the_spec(env):
     assert settings.image_fetch_timeout_seconds == 10
     assert settings.image_max_bytes == 10 * 1024 * 1024
     assert settings.worker_prefetch == 1
-    assert settings.jobs_queue == QueueConfig(
-        name="analysis-jobs",
-        retry_min_seconds=2,
-        retry_max_seconds=30,
-        delivery_limit=3,
-    )
+    # jobs_queue defaults are covered by test_settings.py (same mixin).
     assert settings.results_queue == QueueConfig(
         name="analysis-results",
         retry_min_seconds=2,

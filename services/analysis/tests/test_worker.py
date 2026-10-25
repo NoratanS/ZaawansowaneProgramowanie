@@ -25,10 +25,6 @@ pytestmark = pytest.mark.integration
 FAST = {
     "jobs_queue_retry_min_seconds": 0.05,
     "jobs_queue_retry_max_seconds": 0.2,
-    "jobs_queue_delivery_limit": 3,
-    "results_queue_retry_min_seconds": 0.05,
-    "results_queue_retry_max_seconds": 0.2,
-    "results_queue_delivery_limit": 3,
     "image_fetch_timeout_seconds": 0.2,
     "image_max_bytes": 10_000,
 }
@@ -56,17 +52,7 @@ class FakeDetector:
 
 
 @pytest.fixture
-async def clean_topology(channel, rabbitmq_url):
-    """Delete both queue topologies so each test's Worker declares them afresh."""
-    settings = WorkerSettings(rabbitmq_url=rabbitmq_url)
-    for config in (settings.jobs_queue, settings.results_queue):
-        await channel.queue_delete(config.name)
-        await channel.queue_delete(config.dlq)
-        await channel.exchange_delete(config.dlx)
-
-
-@pytest.fixture
-def worker_for(rabbitmq_url, clean_topology):
+def worker_for(rabbitmq_url, clean_broker):
     """Run a Worker with a fake detector until the block ends."""
 
     @asynccontextmanager
@@ -100,20 +86,6 @@ def submit(channel):
         return job
 
     return publish_job
-
-
-@pytest.fixture
-def next_message(channel):
-    """Wait for the next message on a queue and take it."""
-
-    async def take(queue_name, timeout=5):
-        queue = await channel.get_queue(queue_name)
-        async with asyncio.timeout(timeout):
-            while (message := await queue.get(no_ack=True, fail=False)) is None:
-                await asyncio.sleep(0.02)
-        return message
-
-    return take
 
 
 async def test_a_job_becomes_a_succeeded_result(

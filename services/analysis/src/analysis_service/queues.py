@@ -15,6 +15,10 @@ from faststream.rabbit import (
     RabbitExchange,
     RabbitQueue,
 )
+from faststream.rabbit.schemas import Channel
+
+# How long a publisher waits for the broker to confirm a message.
+PUBLISH_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,24 @@ def queue_arguments(config: QueueConfig) -> dict[str, Any]:
         "x-dead-letter-strategy": "at-least-once",
         "x-overflow": "reject-publish",
     }
+
+
+def confirming_broker(url: str) -> RabbitBroker:
+    """A broker whose publishes fail when unroutable (``on_return_raises``)."""
+    return RabbitBroker(url, default_channel=Channel(on_return_raises=True))
+
+
+async def publish_confirmed(
+    broker: RabbitBroker, message: Any, *, queue: str, message_id: str
+) -> None:
+    """Publish persistently and wait for the confirm; a nack or return raises."""
+    await broker.publish(
+        message,
+        queue=queue,
+        persist=True,
+        message_id=message_id,
+        timeout=PUBLISH_TIMEOUT_SECONDS,
+    )
 
 
 async def declare_queue(broker: RabbitBroker, config: QueueConfig) -> None:

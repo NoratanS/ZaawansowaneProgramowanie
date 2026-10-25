@@ -20,7 +20,7 @@ class ImageFailure(Exception):
 
 async def fetch_image(
     client: httpx.AsyncClient, url: str, *, timeout_seconds: float, max_bytes: int
-) -> bytes:
+) -> bytearray:
     """Download the image, within ``timeout_seconds`` in total."""
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -35,7 +35,7 @@ async def fetch_image(
         ) from exc
 
 
-async def _download(client: httpx.AsyncClient, url: str, max_bytes: int) -> bytes:
+async def _download(client: httpx.AsyncClient, url: str, max_bytes: int) -> bytearray:
     async with client.stream("GET", url) as response:
         if not response.is_success:
             raise ImageFailure(
@@ -53,10 +53,10 @@ async def _download(client: httpx.AsyncClient, url: str, max_bytes: int) -> byte
             body += chunk
             if len(body) > max_bytes:
                 raise too_large
-        return bytes(body)
+        return body
 
 
-def decode_image(data: bytes) -> np.ndarray:
+def decode_image(data: bytes | bytearray) -> np.ndarray:
     """Decode the bytes into a BGR pixel array."""
     image = None
     if data:
