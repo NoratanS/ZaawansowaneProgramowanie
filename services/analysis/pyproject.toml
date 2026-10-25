@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Analysis Service, Worker and Courier for the People Counter"
 requires-python = ">=3.15"
 dependencies = [
+    "fastapi>=0.162.0",
     "faststream[rabbit]>=0.6",
+    "pydantic-settings>=2.16.1",
 ]
 
 [build-system]

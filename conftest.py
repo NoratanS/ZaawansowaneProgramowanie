@@ -17,11 +17,17 @@ def postgres_url():
 
 
 @pytest.fixture(scope="session")
-def rabbitmq_url():
-    """AMQP URL of a throwaway RabbitMQ."""
+def rabbitmq():
+    """A throwaway RabbitMQ container, for tests that need to poke the broker."""
     with RabbitMqContainer("rabbitmq:4.3-management") as rabbitmq:
-        params = rabbitmq.get_connection_params()
-        yield (
-            f"amqp://{rabbitmq.username}:{rabbitmq.password}"
-            f"@{params.host}:{params.port}/"
-        )
+        yield rabbitmq
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_url(rabbitmq):
+    """AMQP URL of the throwaway RabbitMQ."""
+    params = rabbitmq.get_connection_params()
+    return (
+        f"amqp://{rabbitmq.username}:{rabbitmq.password}"
+        f"@{params.host}:{params.port}/"
+    )
