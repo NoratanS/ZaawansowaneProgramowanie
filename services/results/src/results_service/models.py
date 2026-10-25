@@ -2,15 +2,27 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     Field,
     HttpUrl,
+    StrictFloat,
     StrictInt,
     model_validator,
 )
 
 ErrorCode = Literal["image_unreachable", "not_an_image", "image_too_large"]
+
+
+def _no_nul(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("must not contain NUL characters")
+    return value
+
+
+# Postgres text columns cannot hold NUL, so reject it here with a 422.
+Text = Annotated[str, AfterValidator(_no_nul)]
 
 
 class Detection(BaseModel):
@@ -20,12 +32,12 @@ class Detection(BaseModel):
     y: Annotated[StrictInt, Field(ge=0)]
     width: Annotated[StrictInt, Field(ge=1)]
     height: Annotated[StrictInt, Field(ge=1)]
-    confidence: Annotated[float, Field(ge=0, le=1)]
+    confidence: Annotated[StrictFloat, Field(ge=0, le=1)]
 
 
 class ResultError(BaseModel):
     code: ErrorCode
-    message: str
+    message: Text
 
 
 class AnalysisResult(BaseModel):
@@ -37,7 +49,7 @@ class AnalysisResult(BaseModel):
     person_count: Annotated[StrictInt, Field(ge=0)] | None
     detections: list[Detection] | None
     error: ResultError | None
-    model: str
+    model: Text
     requested_at: AwareDatetime
     analyzed_at: AwareDatetime
 

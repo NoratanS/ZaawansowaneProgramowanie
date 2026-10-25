@@ -35,30 +35,39 @@ async def unreachable_db_client():
         yield client
 
 
-# What Postgres sends while it is still starting: a FATAL ErrorResponse, 57P03.
-_STARTING_UP = b"".join(
-    [b"SFATAL\0", b"C57P03\0", b"Mthe database system is starting up\0", b"\0"]
-)
+# FATAL ErrorResponses Postgres sends instead of accepting a connection.
+FATAL_ON_CONNECT = {
+    "starting up": (b"57P03", b"the database system is starting up"),
+    "admin shutdown": (b"57P01", b"terminating connection due to administrator"),
+}
 _SSL_REQUEST_CODE = 80877103
 
 
-async def _answer_starting_up(reader, writer):
-    while True:
-        (length,) = struct.unpack("!I", await reader.readexactly(4))
-        body = await reader.readexactly(length - 4)
-        if struct.unpack("!I", body[:4]) == (_SSL_REQUEST_CODE,):
-            writer.write(b"N")  # no TLS, carry on with the startup message
-            continue
-        writer.write(b"E" + struct.pack("!I", len(_STARTING_UP) + 4) + _STARTING_UP)
-        await writer.drain()
-        writer.close()
-        return
+def _answer_with_fatal(sqlstate, message):
+    error = b"".join([b"SFATAL\0", b"C" + sqlstate + b"\0", b"M" + message + b"\0"])
+    error += b"\0"
+
+    async def answer(reader, writer):
+        while True:
+            (length,) = struct.unpack("!I", await reader.readexactly(4))
+            body = await reader.readexactly(length - 4)
+            if struct.unpack("!I", body[:4]) == (_SSL_REQUEST_CODE,):
+                writer.write(b"N")  # no TLS, carry on with the startup message
+                continue
+            writer.write(b"E" + struct.pack("!I", len(error) + 4) + error)
+            await writer.drain()
+            writer.close()
+            return
+
+    return answer
 
 
-@pytest.fixture
-async def starting_up_db_client():
-    """A client whose database answers every connection with "starting up"."""
-    server = await asyncio.start_server(_answer_starting_up, "127.0.0.1", 0)
+@pytest.fixture(params=FATAL_ON_CONNECT.values(), ids=FATAL_ON_CONNECT)
+async def fatal_on_connect_db_client(request):
+    """A client whose database answers every connection with a FATAL error."""
+    server = await asyncio.start_server(
+        _answer_with_fatal(*request.param), "127.0.0.1", 0
+    )
     port = server.sockets[0].getsockname()[1]
     url = f"postgresql+asyncpg://nobody:nothing@127.0.0.1:{port}/none"
     async with server:

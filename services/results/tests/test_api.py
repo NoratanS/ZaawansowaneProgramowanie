@@ -1,3 +1,4 @@
+import asyncpg
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -43,6 +44,16 @@ async def test_repeat_put_returns_the_stored_result_unchanged(client):
     assert response.status_code == 200
     assert response.json() == SUCCEEDED
     assert (await client.get(url)).json() == SUCCEEDED
+
+
+async def test_repeat_put_of_the_same_body_returns_200(client):
+    url = f"/results/{SUCCEEDED['job_id']}"
+    await client.put(url, json=SUCCEEDED)
+
+    response = await client.put(url, json=SUCCEEDED)
+
+    assert response.status_code == 200
+    assert response.json() == SUCCEEDED
 
 
 async def test_get_returns_a_stored_result(client):
@@ -133,6 +144,14 @@ SHAPE_VIOLATIONS = {
     "fractional box": _with_box(x=1.5),
     "confidence above 1": _with_box(confidence=1.01),
     "confidence below 0": _with_box(confidence=-0.01),
+    "boolean confidence": _with_box(confidence=True),
+    "string confidence": _with_box(confidence="0.9"),
+    "NUL in model": {**SUCCEEDED, "model": "yolox\u0000s"},
+    "NUL in error message": {
+        **FAILED_RESULT,
+        "job_id": SUCCEEDED["job_id"],
+        "error": {"code": "not_an_image", "message": "bad\u0000bytes"},
+    },
     "unknown status": {**SUCCEEDED, "status": "pending"},
     "naive requested_at": {**SUCCEEDED, "requested_at": "2026-10-25T12:00:00"},
     "naive analyzed_at": {**SUCCEEDED, "analyzed_at": "2026-10-25T12:00:03"},
@@ -191,6 +210,15 @@ async def test_list_pages_with_limit_and_offset(client):
     assert response.json() == [second]
 
 
+async def test_list_offset_past_the_end_is_an_empty_array(client):
+    await _put_all(client, [SUCCEEDED])
+
+    response = await client.get("/results", params={"offset": 1})
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 async def test_list_returns_50_by_default(client):
     await _put_all(client, [_failed_with_id(n) for n in range(51)])
 
@@ -236,7 +264,29 @@ async def test_unreachable_database_is_503(unreachable_db_client, method, url, b
     assert response.status_code == 503
 
 
-async def test_database_still_starting_up_is_503(starting_up_db_client):
-    response = await starting_up_db_client.get("/results")
+async def test_database_refusing_connections_is_503(fatal_on_connect_db_client):
+    response = await fatal_on_connect_db_client.get("/results")
 
     assert response.status_code == 503
+
+
+async def _terminate_other_connections(database_url):
+    dsn = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    connection = await asyncpg.connect(dsn)
+    try:
+        await connection.execute(
+            "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity"
+            " WHERE datname = current_database() AND pid <> pg_backend_pid()"
+        )
+    finally:
+        await connection.close()
+
+
+async def test_requests_recover_after_pooled_connections_are_lost(client, database_url):
+    url = f"/results/{SUCCEEDED['job_id']}"
+    await client.put(url, json=SUCCEEDED)  # leaves a connection in the pool
+    await _terminate_other_connections(database_url)
+
+    response = await client.get(url)
+
+    assert response.status_code == 200

@@ -34,8 +34,12 @@ _PUBLIC_COLUMNS = [column for column in results.c if column.name != "stored_at"]
 
 # Errors that mean "no usable connection", seen anywhere in the cause chain.
 # OSError covers refused connections, timeouts and DNS failures.
+# sa.exc.TimeoutError means every pooled connection stayed busy too long.
 _CONNECTION_ERRORS = (
     OSError,
+    sa.exc.TimeoutError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
     asyncpg.CannotConnectNowError,
     asyncpg.TooManyConnectionsError,
     asyncpg.PostgresConnectionError,

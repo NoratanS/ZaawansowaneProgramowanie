@@ -15,7 +15,10 @@ def create_app(settings: ResultsSettings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # The engine connects lazily, so startup never touches the database.
-        app.state.engine = create_async_engine(settings.database_url)
+        # pool_pre_ping swaps out pooled connections a database restart killed.
+        app.state.engine = create_async_engine(
+            settings.database_url, pool_pre_ping=True
+        )
         yield
         await app.state.engine.dispose()
 
