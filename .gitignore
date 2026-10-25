@@ -237,3 +237,7 @@ learning/
 .scratch/
 CLAUDE.md
 docs/
+
+# api_rabbit: downloaded model and analysed images
+src/api_rabbit/model/
+src/api_rabbit/results/
