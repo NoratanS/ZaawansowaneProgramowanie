@@ -9,11 +9,8 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from analysis_service.api import create_app
-from analysis_service.settings import (
-    AnalysisApiSettings,
-    JobsQueueSettings,
-    ResultsQueueSettings,
-)
+from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
+from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import UPLOADS_BUCKET
 
 ANALYSIS_PUBLIC_URL = "http://analysis.example"
@@ -29,13 +26,10 @@ async def channel(rabbitmq_url):
 @pytest.fixture
 async def clean_broker(channel):
     """Delete every queue topology so each test's app declares it afresh."""
-    for config in (
-        JobsQueueSettings().jobs_queue,
-        ResultsQueueSettings().results_queue,
-    ):
-        await channel.queue_delete(config.name)
-        await channel.queue_delete(config.dlq)
-        await channel.exchange_delete(config.dlx)
+    for name in (JOBS_QUEUE, RESULTS_QUEUE):
+        await channel.queue_delete(name)
+        await channel.queue_delete(f"{name}.dlq")
+        await channel.exchange_delete(f"{name}.dlx")
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import time
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,19 +16,12 @@ from typing import Any
 
 import cv2
 import httpx
-from faststream import AckPolicy, FastStream
-from faststream.rabbit import QueueType, RabbitQueue
-from faststream.rabbit.annotations import RabbitMessage
-from faststream.rabbit.schemas import Channel
+from faststream import FastStream
 
 from analysis_service.detector import Detect, Detection, load_detector
 from analysis_service.images import ImageFailure, decode_image, fetch_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
-from analysis_service.queues import (
-    confirming_broker,
-    declare_queue,
-    publish_confirmed,
-)
+from analysis_service.queues import Action, Queue, confirming_broker
 from analysis_service.settings import WorkerSettings
 from analysis_service.uploads import UploadStore, open_store, upload_id_in
 
@@ -42,9 +36,9 @@ logger = logging.getLogger(__name__)
 
 
 def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
-    jobs_queue = settings.jobs_queue
-    results_queue = settings.results_queue
     broker = confirming_broker(settings.rabbitmq_url)
+    jobs = Queue(broker, settings.jobs_queue)
+    results = Queue(broker, settings.results_queue)
     # No per-operation timeout: fetch_image enforces the total limit itself,
     # and httpx's 5 s default would cut it short when the limit is longer.
     http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
@@ -59,8 +53,8 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         store = await resources.enter_async_context(open_store(settings))
         # Declare before the subscriber starts consuming from analysis-jobs.
         await broker.connect()
-        await declare_queue(broker, jobs_queue)
-        await declare_queue(broker, results_queue)
+        await jobs.declare()
+        await results.declare()
 
     @app.after_shutdown
     async def close() -> None:
@@ -106,27 +100,18 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         boxes = [box for d in found if (box := _to_box(d, width, height))]
         return result(status="succeeded", person_count=len(boxes), detections=boxes)
 
-    @broker.subscriber(
-        RabbitQueue(jobs_queue.name, queue_type=QueueType.QUORUM, declare=False),
-        channel=Channel(prefetch_count=settings.worker_prefetch),
-        ack_policy=AckPolicy.MANUAL,
-    )
-    async def handle_job(message: RabbitMessage) -> None:
+    # Errors raise: the queue module retries the job, then dead-letters it.
+    async def handle_job(
+        body: bytes, headers: Mapping[str, Any], message_id: str | None
+    ) -> Action:
         started = time.perf_counter()
-        try:
-            job = AnalysisJob.model_validate_json(message.body)
-            result = await analyse(job)
-            await publish_confirmed(
-                broker, result, queue=results_queue.name, message_id=str(job.job_id)
-            )
-        except Exception:
-            # reject, not nack: only reject counts toward the delivery limit,
-            # so a job that keeps failing ends up in the DLQ.
-            logger.exception("job_id=%s requeued after an error", message.message_id)
-            await message.reject(requeue=True)
-            return
-        await message.ack()
+        job = AnalysisJob.model_validate_json(body)
+        result = await analyse(job)
+        await results.publish(result, message_id=str(job.job_id))
         _log_outcome(result, started)
+        return Action.ACK
+
+    jobs.consume(handle_job, prefetch=settings.worker_prefetch)
 
     return app
 

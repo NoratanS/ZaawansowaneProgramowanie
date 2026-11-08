@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import uvicorn
-from aiormq.exceptions import AMQPError, ChannelInvalidStateError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -19,11 +18,7 @@ from starlette.datastructures import UploadFile
 
 from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
-from analysis_service.queues import (
-    confirming_broker,
-    declare_queue,
-    publish_confirmed,
-)
+from analysis_service.queues import NotQueued, Queue, confirming_broker
 from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import open_store
 
@@ -46,7 +41,6 @@ class UploadAccepted(AnalysisAccepted):
 
 def create_app(settings: AnalysisApiSettings) -> FastAPI:
     results_base_url = settings.results_base_url
-    jobs_queue = settings.jobs_queue
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -55,10 +49,11 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
             broker = confirming_broker(settings.rabbitmq_url)
             await broker.start()
             stack.push_async_callback(broker.stop)
-            await declare_queue(broker, jobs_queue)
+            jobs = Queue(broker, settings.jobs_queue)
+            await jobs.declare()
             store = await stack.enter_async_context(open_store(settings))
             await store.create_bucket_if_missing()
-            app.state.broker = broker
+            app.state.jobs = jobs
             app.state.store = store
             yield
 
@@ -86,17 +81,8 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
             requested_at=datetime.now(UTC),
         )
         try:
-            await publish_confirmed(
-                request.app.state.broker,
-                job,
-                queue=jobs_queue.name,
-                message_id=str(job.job_id),
-            )
-        except (
-            AMQPError,  # returned (unroutable) or nacked by the broker
-            ChannelInvalidStateError,  # connection lost, reconnect pending
-            TimeoutError,  # no confirm within PUBLISH_TIMEOUT_SECONDS
-        ) as exc:
+            await request.app.state.jobs.publish(job, message_id=str(job.job_id))
+        except NotQueued as exc:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "The Analysis Job could not be queued",
