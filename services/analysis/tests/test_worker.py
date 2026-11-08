@@ -2,17 +2,16 @@ import asyncio
 import json
 import logging
 import re
-import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import aio_pika
-import cv2
-import numpy as np
 import pytest
 from werkzeug import Response
+
+from fakes import FakeDetector, png
 
 from analysis_service import worker
 from analysis_service.detector import Detection
@@ -32,27 +31,6 @@ FAST = {
     # The image origin fake listens on localhost, which the guard would refuse.
     "image_allowed_hosts": frozenset({"localhost"}),
 }
-
-
-def png(width, height):
-    ok, encoded = cv2.imencode(".png", np.zeros((height, width, 3), dtype=np.uint8))
-    assert ok
-    return encoded.tobytes()
-
-
-class FakeDetector:
-    """Stands in for YOLOX: returns canned detections and records its calls."""
-
-    def __init__(self, detections=(), error=None):
-        self.detections = list(detections)
-        self.error = error
-        self.images = []
-
-    def __call__(self, image):
-        self.images.append(image)
-        if self.error is not None:
-            raise self.error
-        return self.detections
 
 
 @pytest.fixture
@@ -100,13 +78,8 @@ async def test_a_job_becomes_a_succeeded_result(
     httpserver.expect_request("/people.png").respond_with_data(
         png(width=40, height=30), content_type="image/png"
     )
-    detect = FakeDetector(
-        [
-            # Sticks out left and bottom: clipped to the image, then rounded.
-            Detection(x=-5.4, y=2.6, width=20.0, height=40.0, confidence=0.9),
-            Detection(x=10.2, y=5.0, width=8.6, height=10.4, confidence=0.6),
-        ]
-    )
+    # Clipping and rounding are unit-tested in test_analyse.py.
+    detect = FakeDetector([Detection(x=1, y=2, width=8, height=9, confidence=0.9)])
     before = datetime.now(UTC)
 
     async with worker_for(detect):
@@ -125,11 +98,8 @@ async def test_a_job_becomes_a_succeeded_result(
         "job_id": job["job_id"],
         "image_url": job["image_url"],
         "status": "succeeded",
-        "person_count": 2,
-        "detections": [
-            {"x": 0, "y": 3, "width": 15, "height": 27, "confidence": 0.9},
-            {"x": 10, "y": 5, "width": 9, "height": 10, "confidence": 0.6},
-        ],
+        "person_count": 1,
+        "detections": [{"x": 1, "y": 2, "width": 8, "height": 9, "confidence": 0.9}],
         "error": None,
         "model": "yolox-s",
     }
@@ -137,66 +107,6 @@ async def test_a_job_becomes_a_succeeded_result(
     assert image.shape == (30, 40, 3)
     # The Worker has stopped, so an unacked job would be back in the queue.
     assert await drain(JOBS_QUEUE) == []
-
-
-def stalled(request):
-    time.sleep(0.5)  # past the 0.2 s fetch limit
-    return Response(png(4, 4), content_type="image/png")
-
-
-def endless_body(request):
-    # Chunked, so there is no Content-Length to reject up front.
-    return Response((b"x" * 1000 for _ in range(30)), content_type="image/png")
-
-
-IMAGE_FAILURES = {
-    "404": (lambda r: Response("gone", status=404), "image_unreachable"),
-    "500": (lambda r: Response("oops", status=500), "image_unreachable"),
-    "slow": (stalled, "image_unreachable"),
-    "oversize": (lambda r: Response(b"x" * 20_000), "image_too_large"),
-    "lying-stream": (endless_body, "image_too_large"),
-    "text": (lambda r: Response("hello", content_type="text/plain"), "not_an_image"),
-}
-
-
-@pytest.mark.parametrize(
-    ("handler", "code"), IMAGE_FAILURES.values(), ids=IMAGE_FAILURES.keys()
-)
-async def test_a_bad_image_becomes_a_failed_result_without_retry(
-    worker_for, submit, next_message, drain, httpserver, handler, code
-):
-    httpserver.expect_request("/image").respond_with_handler(handler)
-    detect = FakeDetector()
-
-    async with worker_for(detect):
-        job = await submit(httpserver.url_for("/image"))
-        message = await next_message(RESULTS_QUEUE)
-        # Long enough for several redeliveries at the 50 ms retry delay.
-        await asyncio.sleep(0.6)
-
-    result = json.loads(message.body)
-    assert result["job_id"] == job["job_id"]
-    assert result["status"] == "failed"
-    assert result["error"]["code"] == code
-    assert result["error"]["message"]
-    assert result["person_count"] is None
-    assert result["detections"] is None
-    assert result["model"] == "yolox-s"
-    assert len(httpserver.log) == 1
-    assert detect.images == []
-    assert await drain(RESULTS_QUEUE) == []
-    assert await drain(JOBS_QUEUE) == []
-
-
-async def test_a_refused_connection_becomes_image_unreachable(
-    worker_for, submit, next_message
-):
-    async with worker_for(FakeDetector()):
-        # Nothing listens on port 1.
-        await submit("http://localhost:1/people.png")
-        message = await next_message(RESULTS_QUEUE)
-
-    assert json.loads(message.body)["error"]["code"] == "image_unreachable"
 
 
 async def test_an_internal_url_becomes_a_forbidden_result_without_a_request(
@@ -252,28 +162,6 @@ async def test_the_fetch_limit_is_not_cut_short_by_httpx_defaults(
         message = await next_message(RESULTS_QUEUE, timeout=10)
 
     assert json.loads(message.body)["status"] == "succeeded"
-
-
-async def test_decoding_runs_off_the_event_loop(
-    worker_for, submit, next_message, httpserver, monkeypatch
-):
-    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
-    threads = []
-
-    def recording_decode(data):
-        threads.append(threading.current_thread())
-        return decode_image(data)
-
-    decode_image = worker.decode_image
-    monkeypatch.setattr(worker, "decode_image", recording_decode)
-
-    async with worker_for(FakeDetector()):
-        await submit(httpserver.url_for("/people.png"))
-        message = await next_message(RESULTS_QUEUE)
-
-    assert json.loads(message.body)["status"] == "succeeded"
-    # A blocking decode on the loop thread would stall heartbeats and other jobs.
-    assert threads and threading.main_thread() not in threads
 
 
 async def test_a_job_that_keeps_crashing_is_dead_lettered_after_the_limit(

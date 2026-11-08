@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,22 +35,94 @@ USER_AGENT = (
 logger = logging.getLogger(__name__)
 
 
+LoadImage = Callable[[str], Awaitable[bytes | bytearray]]
+"""Reads the image at a URL; raises ``ImageFailure`` if it can't."""
+
+
+async def analyse(
+    job: AnalysisJob, load_image: LoadImage, detect: Detect
+) -> AnalysisResult:
+    """Count the people in the job's image.
+
+    An image that can't be loaded or decoded gives a failed Result; any
+    other error raises.
+    """
+
+    def result(**outcome: Any) -> AnalysisResult:
+        return AnalysisResult(
+            job_id=job.job_id,
+            image_url=job.image_url,
+            model=MODEL,
+            requested_at=job.requested_at,
+            analyzed_at=datetime.now(UTC),
+            **outcome,
+        )
+
+    try:
+        data = await load_image(str(job.image_url))
+        image = await asyncio.to_thread(decode_image, data)
+    except ImageFailure as failure:
+        # Bad input is final: a failed Result, never a retry.
+        return result(
+            status="failed",
+            error=ResultError(code=failure.code, message=failure.message),
+        )
+    height, width = image.shape[:2]
+    found = await asyncio.to_thread(detect, image)
+    boxes = [box for d in found if (box := _to_box(d, width, height))]
+    return result(status="succeeded", person_count=len(boxes), detections=boxes)
+
+
+class _ImageLoader:
+    """The Worker's ``load_image``: uploads from the store, other URLs over HTTP.
+
+    Call ``open`` at startup, before the first image is loaded.
+    """
+
+    def __init__(self, settings: WorkerSettings) -> None:
+        self._settings = settings
+        # No per-operation timeout: fetch_image enforces the total limit itself,
+        # and httpx's 5 s default would cut it short when the limit is longer.
+        self._http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
+        self._resources = AsyncExitStack()
+        self._resources.push_async_callback(self._http.aclose)
+        self._store: UploadStore | None = None
+
+    async def open(self) -> None:
+        # The API creates the bucket, not the Worker.
+        self._store = await self._resources.enter_async_context(
+            open_store(self._settings)
+        )
+
+    async def aclose(self) -> None:
+        await self._resources.aclose()
+
+    async def __call__(self, image_url: str) -> bytearray:
+        settings = self._settings
+        # Uploads are read by key, so the SSRF guard has nothing to check.
+        if (
+            upload_id := upload_id_in(image_url, settings.uploads_base_url)
+        ) is not None:
+            return await self._store.read_image(upload_id, settings.image_max_bytes)
+        return await fetch_image(
+            self._http,
+            image_url,
+            timeout_seconds=settings.image_fetch_timeout_seconds,
+            max_bytes=settings.image_max_bytes,
+            allowed_hosts=settings.image_allowed_hosts,
+        )
+
+
 def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     broker = confirming_broker(settings.rabbitmq_url)
     jobs = Queue(broker, settings.jobs_queue)
     results = Queue(broker, settings.results_queue)
-    # No per-operation timeout: fetch_image enforces the total limit itself,
-    # and httpx's 5 s default would cut it short when the limit is longer.
-    http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
-    # Opened at startup; the API creates the bucket, not the Worker.
-    resources = AsyncExitStack()
-    store: UploadStore | None = None
+    load_image = _ImageLoader(settings)
     app = FastStream(broker)
 
     @app.on_startup
     async def start() -> None:
-        nonlocal store
-        store = await resources.enter_async_context(open_store(settings))
+        await load_image.open()
         # Declare before the subscriber starts consuming from analysis-jobs.
         await broker.connect()
         await jobs.declare()
@@ -58,47 +130,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
 
     @app.after_shutdown
     async def close() -> None:
-        await http.aclose()
-        await resources.aclose()
-
-    async def load(image_url: str) -> bytearray:
-        # Uploads are read by key, so the SSRF guard has nothing to check.
-        if (
-            upload_id := upload_id_in(image_url, settings.uploads_base_url)
-        ) is not None:
-            return await store.read_image(upload_id, settings.image_max_bytes)
-        return await fetch_image(
-            http,
-            image_url,
-            timeout_seconds=settings.image_fetch_timeout_seconds,
-            max_bytes=settings.image_max_bytes,
-            allowed_hosts=settings.image_allowed_hosts,
-        )
-
-    async def analyse(job: AnalysisJob) -> AnalysisResult:
-        def result(**outcome: Any) -> AnalysisResult:
-            return AnalysisResult(
-                job_id=job.job_id,
-                image_url=job.image_url,
-                model=MODEL,
-                requested_at=job.requested_at,
-                analyzed_at=datetime.now(UTC),
-                **outcome,
-            )
-
-        try:
-            data = await load(str(job.image_url))
-            image = await asyncio.to_thread(decode_image, data)
-        except ImageFailure as failure:
-            # Bad input is final: a failed Result, never a retry.
-            return result(
-                status="failed",
-                error=ResultError(code=failure.code, message=failure.message),
-            )
-        height, width = image.shape[:2]
-        found = await asyncio.to_thread(detect, image)
-        boxes = [box for d in found if (box := _to_box(d, width, height))]
-        return result(status="succeeded", person_count=len(boxes), detections=boxes)
+        await load_image.aclose()
 
     # Errors raise: the queue module retries the job, then dead-letters it.
     async def handle_job(
@@ -106,7 +138,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     ) -> Action:
         started = time.perf_counter()
         job = AnalysisJob.model_validate_json(body)
-        result = await analyse(job)
+        result = await analyse(job, load_image, detect)
         await results.publish(result, message_id=str(job.job_id))
         _log_outcome(result, started)
         return Action.ACK
