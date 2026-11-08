@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import time
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from analysis_service.queues import (
     publish_confirmed,
 )
 from analysis_service.settings import WorkerSettings
+from analysis_service.uploads import UploadStore, open_store, upload_id_in
 
 MODEL = "yolox-s"
 # Wikimedia answers 403 to the default python-httpx User-Agent; it wants
@@ -46,18 +48,38 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     # No per-operation timeout: fetch_image enforces the total limit itself,
     # and httpx's 5 s default would cut it short when the limit is longer.
     http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
+    # Opened at startup; the API creates the bucket, not the Worker.
+    resources = AsyncExitStack()
+    store: UploadStore | None = None
     app = FastStream(broker)
 
     @app.on_startup
-    async def declare_queues() -> None:
+    async def start() -> None:
+        nonlocal store
+        store = await resources.enter_async_context(open_store(settings))
         # Declare before the subscriber starts consuming from analysis-jobs.
         await broker.connect()
         await declare_queue(broker, jobs_queue)
         await declare_queue(broker, results_queue)
 
     @app.after_shutdown
-    async def close_http() -> None:
+    async def close() -> None:
         await http.aclose()
+        await resources.aclose()
+
+    async def load(image_url: str) -> bytearray:
+        # Uploads are read by key, so the SSRF guard has nothing to check.
+        if (
+            upload_id := upload_id_in(image_url, settings.uploads_base_url)
+        ) is not None:
+            return await store.read_image(upload_id, settings.image_max_bytes)
+        return await fetch_image(
+            http,
+            image_url,
+            timeout_seconds=settings.image_fetch_timeout_seconds,
+            max_bytes=settings.image_max_bytes,
+            allowed_hosts=settings.image_allowed_hosts,
+        )
 
     async def analyse(job: AnalysisJob) -> AnalysisResult:
         def result(**outcome: Any) -> AnalysisResult:
@@ -71,13 +93,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
             )
 
         try:
-            data = await fetch_image(
-                http,
-                str(job.image_url),
-                timeout_seconds=settings.image_fetch_timeout_seconds,
-                max_bytes=settings.image_max_bytes,
-                allowed_hosts=settings.image_allowed_hosts,
-            )
+            data = await load(str(job.image_url))
             image = await asyncio.to_thread(decode_image, data)
         except ImageFailure as failure:
             # Bad input is final: a failed Result, never a retry.

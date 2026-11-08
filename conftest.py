@@ -1,4 +1,4 @@
-"""Shared integration fixtures: real Postgres and RabbitMQ, started on demand.
+"""Shared integration fixtures: real Postgres, RabbitMQ and RustFS, started on demand.
 
 The containers start the first time a test asks for them and stop at the end of
 the session, so unit runs never touch Docker.
@@ -15,6 +15,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.rabbitmq import RabbitMqContainer
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.wait_strategies import HttpWaitStrategy
+
+RUSTFS_IMAGE = "rustfs/rustfs:1.0.4"
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +43,29 @@ def rabbitmq_url(rabbitmq):
         f"amqp://{rabbitmq.username}:{rabbitmq.password}"
         f"@{params.host}:{params.port}/"
     )
+
+
+class S3(NamedTuple):
+    endpoint_url: str
+    access_key: str
+    secret_key: str
+
+
+@pytest.fixture(scope="session")
+def s3():
+    """A throwaway RustFS (S3-compatible) store; ready in about half a second."""
+    access_key, secret_key = "test-access", "test-secret"
+    container = (
+        DockerContainer(RUSTFS_IMAGE)
+        .with_env("RUSTFS_ACCESS_KEY", access_key)
+        .with_env("RUSTFS_SECRET_KEY", secret_key)
+        .with_exposed_ports(9000)
+        .waiting_for(HttpWaitStrategy(9000, "/health"))
+    )
+    with container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(9000)
+        yield S3(f"http://{host}:{port}", access_key, secret_key)
 
 
 class KeyPair(NamedTuple):

@@ -8,22 +8,33 @@ from analysis_service.settings import WorkerSettings
 
 pytestmark = pytest.mark.unit
 
+REQUIRED = {
+    "RABBITMQ_URL": "amqp://guest:guest@rabbitmq:5672/",
+    "S3_ENDPOINT_URL": "http://s3:9000",
+    "S3_ACCESS_KEY": "access",
+    "S3_SECRET_KEY": "secret",
+    "ANALYSIS_PUBLIC_URL": "http://localhost:8000",
+}
 # Every optional setting, so the developer's own env can't leak into defaults.
-KNOBS = [name.upper() for name in WorkerSettings.model_fields if name != "rabbitmq_url"]
+KNOBS = [
+    name.upper() for name in WorkerSettings.model_fields if name.upper() not in REQUIRED
+]
 
 
 @pytest.fixture
 def env(monkeypatch):
     for name in KNOBS:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+    for name, value in REQUIRED.items():
+        monkeypatch.setenv(name, value)
     return monkeypatch
 
 
-def test_rabbitmq_url_is_required(env):
-    env.delenv("RABBITMQ_URL")
+@pytest.mark.parametrize("missing", REQUIRED)
+def test_required_settings_must_be_set(env, missing):
+    env.delenv(missing)
 
-    with pytest.raises(ValidationError, match="rabbitmq_url"):
+    with pytest.raises(ValidationError, match=missing.lower()):
         WorkerSettings()
 
 
@@ -35,6 +46,7 @@ def test_defaults_follow_the_spec(env):
     assert settings.image_max_bytes == 10 * 1024 * 1024
     assert settings.worker_prefetch == 1
     assert settings.image_allowed_hosts == frozenset()
+    assert settings.uploads_base_url == "http://localhost:8000/uploads"
     assert settings.model_path == Path(
         "/opt/models/object_detection_yolox_2022nov.onnx"
     )

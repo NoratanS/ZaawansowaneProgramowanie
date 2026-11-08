@@ -1,8 +1,11 @@
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 pytestmark = pytest.mark.e2e
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_a_photo_of_people_gets_a_succeeded_analysis_result(
@@ -119,3 +122,39 @@ def test_the_listing_contains_submitted_analysis_results(
     assert response.status_code == 200
     listed = {result["job_id"] for result in response.json()}
     assert {job["job_id"] for job in jobs} <= listed
+
+
+def test_uploaded_photos_get_analysis_results(
+    http, client_token, analysis_url, wait_for_result
+):
+    uploads = [
+        ("tennis-group.jpg", "image/jpeg"),
+        ("not-an-image.txt", "text/plain"),
+    ]
+    files = [
+        ("files", (name, (FIXTURES / name).read_bytes(), content_type))
+        for name, content_type in uploads
+    ]
+
+    response = http.post(
+        f"{analysis_url}/uploads",
+        files=files,
+        headers={"Authorization": f"Bearer {client_token}"},
+    )
+
+    assert response.status_code == 202, response.text
+    photo, text = response.json()
+    assert [photo["filename"], text["filename"]] == [name for name, _ in uploads]
+
+    succeeded = wait_for_result(photo["result_url"])
+    assert succeeded["status"] == "succeeded"
+    assert 9 <= succeeded["person_count"] <= 15
+    # The browser loads the photo from the Result's image_url to draw boxes.
+    served = http.get(succeeded["image_url"])
+    assert served.status_code == 200
+    assert served.headers["Content-Type"] == "image/jpeg"
+    assert served.content == (FIXTURES / "tennis-group.jpg").read_bytes()
+
+    failed = wait_for_result(text["result_url"])
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "not_an_image"
