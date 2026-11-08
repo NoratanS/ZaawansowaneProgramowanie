@@ -77,6 +77,9 @@ def build_courier(settings: CourierSettings) -> FastStream:
         RabbitQueue(results_queue.name, queue_type=QueueType.QUORUM, declare=False),
         channel=Channel(prefetch_count=settings.courier_prefetch),
         ack_policy=AckPolicy.MANUAL,
+        # Keep the body as bytes: FastStream's JSON decoding runs before the
+        # handler, so a malformed body would fail there and never be rejected.
+        decoder=_raw_body,
     )
     async def deliver(message: RabbitMessage) -> None:
         try:
@@ -116,6 +119,10 @@ def build_courier(settings: CourierSettings) -> FastStream:
             await message.reject(requeue=True)
 
     return app
+
+
+async def _raw_body(message: RabbitMessage) -> bytes:
+    return message.body
 
 
 def _job_id(body: bytes) -> UUID | None:
