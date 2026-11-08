@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.16.1",
     "pyjwt[crypto]>=2.10",
     "python-dotenv>=1.2",
+    "uvicorn>=0.54",
 ]
 
 [project.scripts]

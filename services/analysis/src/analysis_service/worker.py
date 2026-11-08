@@ -168,8 +168,8 @@ def _container_cpus() -> int:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
     settings = WorkerSettings()
+    logging.basicConfig(level=settings.log_level)
     # Without the cap OpenCV starts a thread per host core, and replicas
     # with a CPU quota fight over them.
     cv2.setNumThreads(_container_cpus())

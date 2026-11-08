@@ -1,0 +1,9 @@
+# E2e overlay: an image origin the Workers fetch fixtures from (http://images/<file>),
+# so e2e never needs the internet. It publishes nothing.
+#   docker compose -f compose.yaml -f compose.e2e.yaml -p people-counter-e2e up -d --build --wait
+
+services:
+  images:
+    image: nginx:1.30.6-alpine
+    volumes:
+      - ./tests/e2e/fixtures:/usr/share/nginx/html:ro

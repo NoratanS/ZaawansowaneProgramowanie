@@ -1,9 +1,12 @@
+from typing import Literal
+
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 _ASYNC_SCHEME = "postgresql+asyncpg://"
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class DatabaseSettings(BaseSettings):
@@ -23,6 +26,7 @@ class ResultsSettings(DatabaseSettings):
     """Results Service settings."""
 
     jwt_public_key: str
+    log_level: LogLevel = "INFO"
 
     @field_validator("jwt_public_key")
     @classmethod

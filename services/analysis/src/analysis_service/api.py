@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+import uvicorn
 from aiormq.exceptions import AMQPError, ChannelInvalidStateError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, HttpUrl
@@ -16,6 +17,8 @@ from analysis_service.queues import (
     publish_confirmed,
 )
 from analysis_service.settings import AnalysisApiSettings
+
+PORT = 8000
 
 
 class AnalysisRequest(BaseModel):
@@ -86,3 +89,17 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
         return AnalysisAccepted(job_id=job.job_id, result_url=result_url)
 
     return app
+
+
+def main() -> None:
+    settings = AnalysisApiSettings()
+    uvicorn.run(
+        create_app(settings),
+        host="0.0.0.0",
+        port=PORT,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

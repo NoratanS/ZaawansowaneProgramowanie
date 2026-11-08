@@ -6,3 +6,4 @@
 learning
 docs
 .env
+services/*/tests

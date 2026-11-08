@@ -64,3 +64,18 @@ def test_public_key_must_be_an_rsa_key(monkeypatch, ec_keys):
 
     with pytest.raises(ValidationError, match="RSA"):
         ResultsSettings()
+
+
+@pytest.mark.unit
+def test_log_level_defaults_to_info(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    assert ResultsSettings().log_level == "INFO"
+
+
+@pytest.mark.unit
+def test_log_level_must_be_a_logging_level(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "LOUD")
+
+    with pytest.raises(ValidationError, match="log_level"):
+        ResultsSettings()

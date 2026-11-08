@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
+import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -10,6 +11,8 @@ from results_service import store
 from results_service.auth import require_courier_token
 from results_service.models import AnalysisResult
 from results_service.settings import ResultsSettings
+
+PORT = 8000
 
 
 def create_app(settings: ResultsSettings) -> FastAPI:
@@ -73,3 +76,17 @@ def create_app(settings: ResultsSettings) -> FastAPI:
         return result
 
     return app
+
+
+def main() -> None:
+    settings = ResultsSettings()
+    uvicorn.run(
+        create_app(settings),
+        host="0.0.0.0",
+        port=PORT,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

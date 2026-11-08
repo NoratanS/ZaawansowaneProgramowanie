@@ -4,7 +4,7 @@ Each entrypoint has one settings class, built from the shared pieces below.
 """
 
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from cryptography.hazmat.primitives.serialization import (
@@ -23,6 +23,11 @@ RESULTS_QUEUE = "analysis-results"
 
 Seconds = Annotated[float, Field(gt=0)]
 Limit = Annotated[int, Field(ge=1)]
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+class LoggingSettings(BaseSettings):
+    log_level: LogLevel = "INFO"
 
 
 class BrokerSettings(BaseSettings):
@@ -95,7 +100,9 @@ class PrivateKeySettings(BaseSettings):
         return value
 
 
-class AnalysisApiSettings(BrokerSettings, JobsQueueSettings, PublicKeySettings):
+class AnalysisApiSettings(
+    BrokerSettings, JobsQueueSettings, PublicKeySettings, LoggingSettings
+):
     """Analysis Service HTTP API settings."""
 
     results_public_url: HttpUrl
@@ -106,7 +113,9 @@ class AnalysisApiSettings(BrokerSettings, JobsQueueSettings, PublicKeySettings):
         return str(self.results_public_url).rstrip("/")
 
 
-class WorkerSettings(BrokerSettings, JobsQueueSettings, ResultsQueueSettings):
+class WorkerSettings(
+    BrokerSettings, JobsQueueSettings, ResultsQueueSettings, LoggingSettings
+):
     """Worker settings."""
 
     image_fetch_timeout_seconds: Seconds = 10
@@ -115,7 +124,9 @@ class WorkerSettings(BrokerSettings, JobsQueueSettings, ResultsQueueSettings):
     model_path: Path = BAKED_MODEL_PATH
 
 
-class CourierSettings(BrokerSettings, ResultsQueueSettings, PrivateKeySettings):
+class CourierSettings(
+    BrokerSettings, ResultsQueueSettings, PrivateKeySettings, LoggingSettings
+):
     """Courier settings."""
 
     results_service_url: HttpUrl

@@ -148,8 +148,9 @@ def _cause(outcome: Outcome, timeout: float) -> str:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(build_courier(CourierSettings()).run())
+    settings = CourierSettings()
+    logging.basicConfig(level=settings.log_level)
+    asyncio.run(build_courier(settings).run())
 
 
 if __name__ == "__main__":
