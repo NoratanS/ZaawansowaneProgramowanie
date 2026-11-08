@@ -26,6 +26,10 @@ _Avoid_: Delivery worker, dispatcher, consumer (unqualified)
 A client's ask to count the people in the image at a given URL.
 _Avoid_: Submission, task
 
+**Upload**:
+A photo a client sends as a file instead of a URL. The Analysis Service stores it and queues an Analysis Job whose image URL points back at the stored copy, so the rest of the flow is the same as for an Analysis Request.
+_Avoid_: Attachment, file (when the domain concept is meant)
+
 **Analysis Job**:
 An accepted Analysis Request waiting in or moving through the queue. Identified by a job id that the Analysis Service assigns on acceptance and that stays with it through to its Analysis Result.
 _Avoid_: Task, message (when the domain concept is meant)

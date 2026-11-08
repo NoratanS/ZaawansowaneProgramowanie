@@ -23,6 +23,8 @@
   tr.clickable { cursor: pointer; }
   tr.clickable:hover { background: #8882; }
   canvas { max-width: 100%; height: auto; display: block; margin-top: 8px; }
+  #drop { border: 2px dashed #8888; border-radius: 6px; padding: 16px; text-align: center; margin-bottom: 8px; }
+  #drop.over { border-color: var(--ok); background: #8882; }
 </style>
 </head>
 <body>
@@ -41,6 +43,13 @@
     <button type="submit">Count people</button>
   </label>
 </form>
+<form id="upload-form">
+  <label>Photos
+    <input id="photos" type="file" accept="image/*" multiple>
+    <button type="submit">Upload</button>
+  </label>
+</form>
+<div id="drop" class="muted">...or drop up to 100 photos here</div>
 <div id="job" class="muted"></div>
 
 <h2>Viewer</h2>
@@ -95,39 +104,75 @@ function setJobLine(text, className = "muted") {
 // and a poll from an older one (even mid-fetch) stops when it sees that.
 let pollGeneration = 0;
 
-$("submit-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const generation = ++pollGeneration;
-  setJobLine("Submitting...");
+// POST to the Analysis Service; the response, or null after showing the error.
+async function postToAnalysis(path, init) {
   let url;
   try {
     url = await getAnalysisUrl();
   } catch (error) {
     setJobLine(`Could not load the page config (${error.message}).`, "error");
-    return;
+    return null;
   }
+  const headers = { ...init.headers, "Authorization": `Bearer ${tokenInput.value.trim()}` };
   let response;
   try {
-    response = await fetch(`${url}/analyses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${tokenInput.value.trim()}`,
-      },
-      body: JSON.stringify({ image_url: $("image-url").value }),
-    });
+    response = await fetch(`${url}${path}`, { ...init, method: "POST", headers });
   } catch (error) {
     // A CORS block also lands here: open the page at RESULTS_PUBLIC_URL exactly.
     setJobLine(`Could not reach the Analysis Service (${error.message}).`, "error");
-    return;
+    return null;
   }
   const body = await response.json().catch(() => ({}));
   if (response.status !== 202) {
     setJobLine(`Rejected: ${response.status} ${describeDetail(body.detail)}`, "error");
-    return;
+    return null;
   }
+  return body;
+}
+
+$("submit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const generation = ++pollGeneration;
+  setJobLine("Submitting...");
+  const body = await postToAnalysis("/analyses", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_url: $("image-url").value }),
+  });
+  if (body === null) return;
   setJobLine(`Job ${body.job_id}: pending...`);
   poll(generation, body.job_id, body.result_url);
+});
+
+// One request per batch. Uploads aren't polled one by one: their Results
+// show up in the table on its next refresh.
+async function upload(files) {
+  if (files.length === 0) return;
+  ++pollGeneration;  // stop a URL job's poll from overwriting this line
+  setJobLine(`Uploading ${files.length} file(s)...`);
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+  // No Content-Type: the browser sets it with the multipart boundary.
+  const body = await postToAnalysis("/uploads", { body: form });
+  if (body === null) return;
+  setJobLine(`${body.length} jobs queued.`);
+  refreshTable();
+}
+
+$("upload-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  upload($("photos").files);
+});
+
+const drop = $("drop");
+drop.addEventListener("dragover", (event) => {
+  event.preventDefault();  // allows the drop
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("over");
+  upload(event.dataTransfer.files);
 });
 
 function describeDetail(detail) {

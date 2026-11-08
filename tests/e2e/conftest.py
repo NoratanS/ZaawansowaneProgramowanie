@@ -27,6 +27,8 @@ E2E_ENV = {
     "RABBITMQ_DEFAULT_USER": "e2e",
     "RABBITMQ_DEFAULT_PASS": "e2e",
     "POSTGRES_PASSWORD": "e2e",
+    "S3_ACCESS_KEY": "e2e-access",
+    "S3_SECRET_KEY": "e2e-secret",
 }
 ANALYSIS_URL = f"http://localhost:{E2E_ENV['ANALYSIS_API_PORT']}"
 RESULTS_URL = f"http://localhost:{E2E_ENV['RESULTS_PORT']}"

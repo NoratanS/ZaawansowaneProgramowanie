@@ -56,3 +56,21 @@ async def test_post_from_the_results_origin_carries_the_allow_origin_header(
 
     assert response.status_code == 202
     assert response.headers["access-control-allow-origin"] == "http://localhost:8001"
+
+
+@pytest.mark.parametrize(
+    "origin, allowed",
+    [("http://localhost:8001", True), ("http://evil.example", False)],
+)
+async def test_uploads_follow_the_same_origin_rule(client_for, origin, allowed):
+    async with client_for("http://localhost:8001") as client:
+        preflight = await client.options("/uploads", headers=_preflight(origin))
+        response = await client.post(
+            "/uploads",
+            files=[("files", ("a.jpg", b"\xff\xd8", "image/jpeg"))],
+            headers={"Origin": origin},
+        )
+
+    assert response.status_code == 202
+    for answer in (preflight, response):
+        assert ("access-control-allow-origin" in answer.headers) == allowed

@@ -35,6 +35,25 @@ class BrokerSettings(BaseSettings):
     rabbitmq_url: str
 
 
+class ImageLimitSettings(BaseSettings):
+    image_max_bytes: Limit = 10 * 1024 * 1024
+
+
+class UploadSettings(BaseSettings):
+    """The S3-compatible store for uploaded photos, and their public URLs."""
+
+    s3_endpoint_url: HttpUrl
+    s3_access_key: str
+    s3_secret_key: SecretStr
+    # The Analysis Service as the browser sees it; uploads are served under it.
+    analysis_public_url: HttpUrl
+
+    @property
+    def uploads_base_url(self) -> str:
+        """Where ``GET /uploads/{id}`` lives, with no trailing slash."""
+        return str(self.analysis_public_url).rstrip("/") + "/uploads"
+
+
 class JobsQueueSettings(BaseSettings):
     jobs_queue_retry_min_seconds: Seconds = 2
     jobs_queue_retry_max_seconds: Seconds = 30
@@ -102,7 +121,12 @@ class PrivateKeySettings(BaseSettings):
 
 
 class AnalysisApiSettings(
-    BrokerSettings, JobsQueueSettings, PublicKeySettings, LoggingSettings
+    BrokerSettings,
+    JobsQueueSettings,
+    PublicKeySettings,
+    UploadSettings,
+    ImageLimitSettings,
+    LoggingSettings,
 ):
     """Analysis Service HTTP API settings."""
 
@@ -121,12 +145,16 @@ class AnalysisApiSettings(
 
 
 class WorkerSettings(
-    BrokerSettings, JobsQueueSettings, ResultsQueueSettings, LoggingSettings
+    BrokerSettings,
+    JobsQueueSettings,
+    ResultsQueueSettings,
+    UploadSettings,
+    ImageLimitSettings,
+    LoggingSettings,
 ):
     """Worker settings."""
 
     image_fetch_timeout_seconds: Seconds = 10
-    image_max_bytes: Limit = 10 * 1024 * 1024
     # Hosts exempt from the internal-address check, e.g. "images" in e2e.
     image_allowed_hosts: Annotated[frozenset[str], NoDecode] = frozenset()
     worker_prefetch: Limit = 1

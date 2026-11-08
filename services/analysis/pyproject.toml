@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Analysis Service, Worker and Courier for the People Counter"
 requires-python = ">=3.15"
 dependencies = [
+    "aiobotocore>=3.10",
     "fastapi>=0.162.0",
     "faststream[rabbit]>=0.6",
     "httpx>=0.28.1",
@@ -12,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.16.1",
     "pyjwt[crypto]>=2.10",
     "python-dotenv>=1.2",
+    "python-multipart>=0.0.20",
     "uvicorn>=0.54",
 ]
 

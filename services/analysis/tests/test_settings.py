@@ -13,11 +13,16 @@ pytestmark = pytest.mark.unit
 REQUIRED = {
     "RABBITMQ_URL": "amqp://guest:guest@rabbitmq:5672/",
     "RESULTS_PUBLIC_URL": "http://localhost:8001",
+    "S3_ENDPOINT_URL": "http://s3:9000",
+    "S3_ACCESS_KEY": "access",
+    "S3_SECRET_KEY": "secret",
+    "ANALYSIS_PUBLIC_URL": "http://localhost:8000",
 }
 KNOBS = [
     "JOBS_QUEUE_RETRY_MIN_SECONDS",
     "JOBS_QUEUE_RETRY_MAX_SECONDS",
     "JOBS_QUEUE_DELIVERY_LIMIT",
+    "IMAGE_MAX_BYTES",
 ]
 
 
@@ -44,6 +49,22 @@ def test_required_settings_come_from_the_environment(env):
 
     assert settings.rabbitmq_url == "amqp://guest:guest@rabbitmq:5672/"
     assert settings.results_base_url == "http://localhost:8001"
+    assert str(settings.s3_endpoint_url) == "http://s3:9000/"
+    assert settings.s3_access_key == "access"
+    assert settings.s3_secret_key.get_secret_value() == "secret"
+    # The upload size limit is shared with the Worker.
+    assert settings.image_max_bytes == 10 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "analysis_public_url",
+    ["https://pc.example/analysis", "https://pc.example/analysis/"],
+)
+def test_uploads_are_served_under_the_analysis_public_url(env, analysis_public_url):
+    env.setenv("ANALYSIS_PUBLIC_URL", analysis_public_url)
+
+    expected = "https://pc.example/analysis/uploads"
+    assert AnalysisApiSettings().uploads_base_url == expected
 
 
 def test_jobs_queue_defaults_follow_the_spec(env):
