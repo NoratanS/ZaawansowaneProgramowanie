@@ -27,6 +27,8 @@ FAST = {
     "jobs_queue_retry_max_seconds": 0.2,
     "image_fetch_timeout_seconds": 0.2,
     "image_max_bytes": 10_000,
+    # The image origin fake listens on localhost, which the guard would refuse.
+    "image_allowed_hosts": frozenset({"localhost"}),
 }
 
 
@@ -187,10 +189,32 @@ async def test_a_refused_connection_becomes_image_unreachable(
 ):
     async with worker_for(FakeDetector()):
         # Nothing listens on port 1.
-        await submit("http://127.0.0.1:1/people.png")
+        await submit("http://localhost:1/people.png")
         message = await next_message("analysis-results")
 
     assert json.loads(message.body)["error"]["code"] == "image_unreachable"
+
+
+async def test_an_internal_url_becomes_a_forbidden_result_without_a_request(
+    worker_for, submit, next_message, drain, httpserver
+):
+    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
+    detect = FakeDetector()
+
+    async with worker_for(detect, image_allowed_hosts=frozenset()):
+        job = await submit(httpserver.url_for("/people.png"))
+        message = await next_message("analysis-results")
+        # Long enough for several redeliveries at the 50 ms retry delay.
+        await asyncio.sleep(0.6)
+
+    result = json.loads(message.body)
+    assert result["job_id"] == job["job_id"]
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "image_url_forbidden"
+    assert httpserver.log == []
+    assert detect.images == []
+    assert await drain("analysis-results") == []
+    assert await drain("analysis-jobs") == []
 
 
 async def test_the_image_request_names_the_app_in_its_user_agent(

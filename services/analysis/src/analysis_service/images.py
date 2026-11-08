@@ -1,6 +1,9 @@
 """Fetching and decoding the image an Analysis Job points at."""
 
 import asyncio
+import ipaddress
+import socket
+from collections.abc import Collection
 
 import cv2
 import httpx
@@ -19,11 +22,20 @@ class ImageFailure(Exception):
 
 
 async def fetch_image(
-    client: httpx.AsyncClient, url: str, *, timeout_seconds: float, max_bytes: int
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    timeout_seconds: float,
+    max_bytes: int,
+    allowed_hosts: Collection[str],
 ) -> bytearray:
-    """Download the image, within ``timeout_seconds`` in total."""
+    """Download the image, within ``timeout_seconds`` in total.
+
+    A host outside ``allowed_hosts`` must resolve to public addresses only.
+    """
     try:
         async with asyncio.timeout(timeout_seconds):
+            await _check_host(httpx.URL(url).host, allowed_hosts)
             return await _download(client, url, max_bytes)
     except TimeoutError as exc:
         raise ImageFailure(
@@ -33,6 +45,39 @@ async def fetch_image(
         raise ImageFailure(
             "image_unreachable", f"the image could not be fetched: {exc!r}"
         ) from exc
+
+
+async def _check_host(host: str, allowed_hosts: Collection[str]) -> None:
+    """Refuse a host that resolves to any loopback, private or other internal address.
+
+    httpx resolves the host again when it connects, so a host that answers
+    differently the second time (DNS rebinding) gets through. Accepted: the
+    stack runs locally, behind JWT.
+    """
+    if host in allowed_hosts:
+        return
+    try:
+        addresses = await _resolve(host)
+    except socket.gaierror as exc:
+        raise ImageFailure(
+            "image_unreachable", f"the image host could not be resolved: {exc!r}"
+        ) from exc
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        # is_global is False for loopback, private, link-local, reserved and
+        # unspecified (IPv4-mapped IPv6 included); some multicast is "global".
+        if not ip.is_global or ip.is_multicast:
+            raise ImageFailure(
+                "image_url_forbidden", f"the image host {host} is an internal address"
+            )
+
+
+async def _resolve(host: str) -> list[str]:
+    infos = await asyncio.get_running_loop().getaddrinfo(
+        host, None, type=socket.SOCK_STREAM
+    )
+    # Drop an IPv6 scope id ("fe80::1%eth0"); ip_address can't parse it.
+    return [str(info[4][0]).split("%")[0] for info in infos]
 
 
 async def _download(client: httpx.AsyncClient, url: str, max_bytes: int) -> bytearray:

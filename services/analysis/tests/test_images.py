@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import subprocess
 import sys
 
@@ -8,6 +9,7 @@ import httpx
 import numpy as np
 import pytest
 
+from analysis_service import images
 from analysis_service.images import ImageFailure, decode_image, fetch_image
 
 pytestmark = pytest.mark.unit
@@ -15,15 +17,30 @@ pytestmark = pytest.mark.unit
 URL = "http://images.example/people.jpg"
 
 
-async def fetch(handler, *, timeout_seconds=1.0, max_bytes=100):
+def ok(request):
+    return httpx.Response(200, content=b"\xff\xd8jpeg")
+
+
+async def fetch(
+    handler,
+    *,
+    url=URL,
+    timeout_seconds=1.0,
+    max_bytes=100,
+    allowed_hosts=frozenset({"images.example"}),
+):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         return await fetch_image(
-            client, URL, timeout_seconds=timeout_seconds, max_bytes=max_bytes
+            client,
+            url,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+            allowed_hosts=allowed_hosts,
         )
 
 
 async def test_a_2xx_image_comes_back_as_bytes():
-    body = await fetch(lambda request: httpx.Response(200, content=b"\xff\xd8jpeg"))
+    body = await fetch(ok)
 
     assert body == b"\xff\xd8jpeg"
 
@@ -33,6 +50,101 @@ async def expect_failure(handler, code, **limits):
         await fetch(handler, **limits)
     assert failure.value.code == code
     assert failure.value.message
+
+
+def recorder():
+    requests = []
+
+    def record(request):
+        requests.append(request)
+        return ok(request)
+
+    return record, requests
+
+
+INTERNAL = {
+    "loopback": "127.0.0.1",
+    "loopback-v6": "[::1]",
+    "private-10": "10.0.0.7",
+    "private-172": "172.18.0.3",
+    "private-192": "192.168.1.1",
+    "metadata": "169.254.169.254",
+    "link-local-v6": "[fe80::1]",
+    "unique-local-v6": "[fd00::1]",
+    "multicast": "224.0.0.1",
+    "multicast-global": "233.252.0.1",
+    "multicast-v6": "[ff0e::1]",
+    "reserved": "240.0.0.1",
+    "broadcast": "255.255.255.255",
+    "unspecified": "0.0.0.0",
+    "unspecified-v6": "[::]",
+    "mapped-loopback": "[::ffff:127.0.0.1]",
+}
+
+
+@pytest.mark.parametrize("host", INTERNAL.values(), ids=INTERNAL.keys())
+async def test_an_internal_address_is_forbidden_before_any_request(host):
+    record, requests = recorder()
+
+    await expect_failure(
+        record, "image_url_forbidden", url=f"http://{host}:15672/people.jpg"
+    )
+    assert requests == []
+
+
+async def test_a_host_name_that_resolves_internal_is_forbidden():
+    record, requests = recorder()
+
+    # localhost resolves from /etc/hosts, so this needs no network.
+    await expect_failure(
+        record, "image_url_forbidden", url="http://localhost/people.jpg"
+    )
+    assert requests == []
+
+
+async def test_one_internal_address_among_public_ones_is_enough(monkeypatch):
+    async def resolve(host):
+        return ["93.184.215.14", "10.0.0.7"]
+
+    monkeypatch.setattr(images, "_resolve", resolve)
+    record, requests = recorder()
+
+    await expect_failure(
+        record,
+        "image_url_forbidden",
+        url="http://images.example/people.jpg",
+        allowed_hosts=frozenset(),
+    )
+    assert requests == []
+
+
+@pytest.mark.parametrize("host", ["93.184.215.14", "[2606:4700::1111]"])
+async def test_a_public_address_is_fetched(host):
+    body = await fetch(ok, url=f"http://{host}/people.jpg", allowed_hosts=frozenset())
+
+    assert body == b"\xff\xd8jpeg"
+
+
+async def test_an_allowed_host_is_fetched_even_if_internal():
+    body = await fetch(
+        ok, url="http://localhost/people.jpg", allowed_hosts=frozenset({"localhost"})
+    )
+
+    assert body == b"\xff\xd8jpeg"
+
+
+async def test_a_host_that_does_not_resolve_is_unreachable(monkeypatch):
+    async def resolve(host):
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(images, "_resolve", resolve)
+
+    await expect_failure(
+        ok,
+        "image_unreachable",
+        url="http://nowhere.example/",
+        allowed_hosts=frozenset(),
+    )
 
 
 @pytest.mark.parametrize("status", [404, 403, 500, 503, 302, 304])

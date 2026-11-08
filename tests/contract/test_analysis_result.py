@@ -42,6 +42,12 @@ OUTCOMES = {
         "detections": None,
         "error": {"code": "not_an_image", "message": "not a picture"},
     },
+    "forbidden": {
+        "status": "failed",
+        "person_count": None,
+        "detections": None,
+        "error": {"code": "image_url_forbidden", "message": "internal address"},
+    },
 }
 
 

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_public_key,
 )
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 from analysis_service.queues import QueueConfig
 
@@ -127,8 +127,18 @@ class WorkerSettings(
 
     image_fetch_timeout_seconds: Seconds = 10
     image_max_bytes: Limit = 10 * 1024 * 1024
+    # Hosts exempt from the internal-address check, e.g. "images" in e2e.
+    image_allowed_hosts: Annotated[frozenset[str], NoDecode] = frozenset()
     worker_prefetch: Limit = 1
     model_path: Path = BAKED_MODEL_PATH
+
+    @field_validator("image_allowed_hosts", mode="before")
+    @classmethod
+    def _split_hosts(cls, value: object) -> object:
+        # Comma-separated in the env; host names compare lowercase, as httpx gives them.
+        if isinstance(value, str):
+            return {host.strip().lower() for host in value.split(",") if host.strip()}
+        return value
 
 
 class CourierSettings(
