@@ -310,3 +310,23 @@ async def test_requests_recover_after_pooled_connections_are_lost(client, databa
     response = await client.get(url)
 
     assert response.status_code == 200
+
+
+async def test_root_serves_the_ui_page(unreachable_db_client):
+    response = await unreachable_db_client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>People Counter</title>" in response.text
+
+
+async def test_ui_config_points_at_the_analysis_service(http_client):
+    # The engine connects lazily, so this database is never reached.
+    async with http_client(
+        "postgresql+asyncpg://u:p@db/none",
+        analysis_public_url="https://analysis.example/",
+    ) as client:
+        response = await client.get("/ui-config")
+
+    assert response.status_code == 200
+    assert response.json() == {"analysis_url": "https://analysis.example"}

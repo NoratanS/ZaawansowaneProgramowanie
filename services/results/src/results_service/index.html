@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People Counter</title>
+<style>
+  :root { color-scheme: light dark; --muted: #777; --ok: #1a7f37; --bad: #cf222e; --box: #ff2d55; }
+  body { font: 15px/1.4 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  form, .field { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  label { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; }
+  input { flex: 1; min-width: 0; padding: 6px; font: inherit; }
+  button { padding: 6px 14px; font: inherit; }
+  #job { min-height: 1.4em; }
+  .muted { color: var(--muted); }
+  .succeeded { color: var(--ok); }
+  .failed, .error { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #8884; }
+  td.url { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: #8882; }
+  canvas { max-width: 100%; height: auto; display: block; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>People Counter</h1>
+
+<div class="field">
+  <label>Client token
+    <input id="token" type="password" autocomplete="off"
+           placeholder="docker compose exec courier issue-token --sub demo">
+  </label>
+</div>
+
+<form id="submit-form">
+  <label>Image URL
+    <input id="image-url" type="url" required placeholder="https://example.com/people.jpg">
+    <button type="submit">Count people</button>
+  </label>
+</form>
+<div id="job" class="muted"></div>
+
+<h2>Viewer</h2>
+<div id="viewer" class="muted">Click a succeeded Result to see its boxes.</div>
+<canvas id="canvas" hidden></canvas>
+
+<h2>Recent Results</h2>
+<table>
+  <thead><tr><th>Status</th><th>Count</th><th>Image</th><th>Error</th></tr></thead>
+  <tbody id="results"></tbody>
+</table>
+
+<script>
+"use strict";
+
+const TOKEN_KEY = "people-counter-token";
+const FAST_POLL_MS = 1000;
+const SLOW_POLL_MS = 5000;
+const FAST_FOR_MS = 30 * 1000;
+const GIVE_UP_AFTER_MS = 10 * 60 * 1000;
+const TABLE_REFRESH_MS = 5000;
+
+const $ = (id) => document.getElementById(id);
+const tokenInput = $("token");
+const jobLine = $("job");
+const viewer = $("viewer");
+const canvas = $("canvas");
+
+// localStorage can throw (private mode, blocked storage); the page works without it.
+try { tokenInput.value = localStorage.getItem(TOKEN_KEY) || ""; } catch {}
+tokenInput.addEventListener("input", () => {
+  try { localStorage.setItem(TOKEN_KEY, tokenInput.value.trim()); } catch {}
+});
+
+let analysisUrl = null;
+async function getAnalysisUrl() {
+  if (analysisUrl === null) {
+    // Relative URLs keep working when the Results Service sits under a path.
+    const response = await fetch("ui-config");
+    if (!response.ok) throw new Error(`ui-config answered ${response.status}`);
+    analysisUrl = (await response.json()).analysis_url;
+  }
+  return analysisUrl;
+}
+
+function setJobLine(text, className = "muted") {
+  jobLine.textContent = text;
+  jobLine.className = className;
+}
+
+// Only the latest submitted job is polled: a new submit bumps the generation,
+// and a poll from an older one (even mid-fetch) stops when it sees that.
+let pollGeneration = 0;
+
+$("submit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const generation = ++pollGeneration;
+  setJobLine("Submitting...");
+  let url;
+  try {
+    url = await getAnalysisUrl();
+  } catch (error) {
+    setJobLine(`Could not load the page config (${error.message}).`, "error");
+    return;
+  }
+  let response;
+  try {
+    response = await fetch(`${url}/analyses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${tokenInput.value.trim()}`,
+      },
+      body: JSON.stringify({ image_url: $("image-url").value }),
+    });
+  } catch (error) {
+    // A CORS block also lands here: open the page at RESULTS_PUBLIC_URL exactly.
+    setJobLine(`Could not reach the Analysis Service (${error.message}).`, "error");
+    return;
+  }
+  const body = await response.json().catch(() => ({}));
+  if (response.status !== 202) {
+    setJobLine(`Rejected: ${response.status} ${describeDetail(body.detail)}`, "error");
+    return;
+  }
+  setJobLine(`Job ${body.job_id}: pending...`);
+  poll(generation, body.job_id, body.result_url);
+});
+
+function describeDetail(detail) {
+  if (Array.isArray(detail)) return detail.map((item) => item.msg).join("; ");
+  return detail || "";
+}
+
+function poll(generation, jobId, resultUrl) {
+  const startedAt = Date.now();
+  const tick = async () => {
+    if (generation !== pollGeneration) return;
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= GIVE_UP_AFTER_MS) {
+      setJobLine(`Job ${jobId}: still pending, check later.`);
+      return;
+    }
+    try {
+      const response = await fetch(resultUrl);
+      if (generation !== pollGeneration) return;
+      if (response.ok) {
+        const result = await response.json();
+        setJobLine(`Job ${jobId}: ${summary(result)}`, result.status);
+        refreshTable();
+        if (result.status === "succeeded") show(result);
+        return;
+      }
+    } catch {}
+    // 404 (not delivered yet) or a network blip: try again later.
+    setTimeout(tick, elapsed < FAST_FOR_MS ? FAST_POLL_MS : SLOW_POLL_MS);
+  };
+  tick();
+}
+
+function summary(result) {
+  if (result.status === "succeeded") return `${result.person_count} people`;
+  return `failed (${result.error.code}): ${result.error.message}`;
+}
+
+function cell(row, content) {
+  const td = row.insertCell();
+  if (content instanceof Node) td.append(content);
+  else td.textContent = content;
+  return td;
+}
+
+async function refreshTable() {
+  let response;
+  try {
+    response = await fetch("results?limit=50");
+  } catch {
+    return;
+  }
+  if (!response.ok) return;
+  const rows = (await response.json()).map((result) => {
+    const row = document.createElement("tr");
+    const status = cell(row, result.status);
+    status.className = result.status;
+    cell(row, result.person_count ?? "");
+    const link = document.createElement("a");
+    link.href = result.image_url;
+    link.textContent = result.image_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.addEventListener("click", (event) => event.stopPropagation());
+    cell(row, link).className = "url";
+    cell(row, result.error?.code ?? "");
+    if (result.status === "succeeded") {
+      row.className = "clickable";
+      row.addEventListener("click", () => show(result));
+    }
+    return row;
+  });
+  $("results").replaceChildren(...rows);
+}
+
+// The image being shown; a slower load of an earlier click is dropped.
+let shownImage = null;
+
+function show(result) {
+  viewer.textContent = `Loading ${result.image_url} ...`;
+  viewer.className = "muted";
+  // No crossOrigin: the canvas only draws, so a tainted canvas is fine and
+  // images from hosts without CORS headers still load.
+  const image = new Image();
+  shownImage = image;
+  image.onload = () => {
+    if (image !== shownImage) return;
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    // Boxes are in pixels of the original image, the canvas's own units.
+    context.lineWidth = Math.max(2, Math.round(image.naturalWidth / 300));
+    context.strokeStyle = getComputedStyle(document.documentElement)
+      .getPropertyValue("--box");
+    for (const box of result.detections) {
+      context.strokeRect(box.x, box.y, box.width, box.height);
+    }
+    canvas.hidden = false;
+    viewer.textContent = `${result.person_count} people in ${result.image_url}`;
+  };
+  image.onerror = () => {
+    if (image !== shownImage) return;
+    canvas.hidden = true;
+    viewer.textContent = `Could not load ${result.image_url} in the browser.`;
+    viewer.className = "error";
+  };
+  image.src = result.image_url;
+}
+
+// A hidden tab skips the refresh and catches up when it is shown again.
+refreshTable();
+setInterval(() => { if (!document.hidden) refreshTable(); }, TABLE_REFRESH_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshTable();
+});
+</script>
+</body>
+</html>

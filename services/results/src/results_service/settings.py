@@ -2,7 +2,7 @@ from typing import Literal
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from pydantic import field_validator
+from pydantic import HttpUrl, field_validator
 from pydantic_settings import BaseSettings
 
 _ASYNC_SCHEME = "postgresql+asyncpg://"
@@ -27,6 +27,8 @@ class ResultsSettings(DatabaseSettings):
 
     jwt_public_key: str
     log_level: LogLevel = "INFO"
+    # Where the UI page sends Analysis Requests, as the browser sees it.
+    analysis_public_url: HttpUrl = HttpUrl("http://localhost:8000")
 
     @field_validator("jwt_public_key")
     @classmethod
@@ -35,3 +37,8 @@ class ResultsSettings(DatabaseSettings):
         if not isinstance(load_pem_public_key(value.encode()), RSAPublicKey):
             raise ValueError("must be an RSA public key")
         return value
+
+    @property
+    def analysis_base_url(self) -> str:
+        """``analysis_public_url`` without the trailing slash ``HttpUrl`` may add."""
+        return str(self.analysis_public_url).rstrip("/")
