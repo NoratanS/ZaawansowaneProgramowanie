@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -32,6 +34,9 @@ def test_defaults_follow_the_spec(env):
     assert settings.image_fetch_timeout_seconds == 10
     assert settings.image_max_bytes == 10 * 1024 * 1024
     assert settings.worker_prefetch == 1
+    assert settings.model_path == Path(
+        "/opt/models/object_detection_yolox_2022nov.onnx"
+    )
     # jobs_queue defaults are covered by test_settings.py (same mixin).
     assert settings.results_queue == QueueConfig(
         name="analysis-results",
@@ -46,6 +51,7 @@ def test_knobs_come_from_the_environment(env):
     env.setenv("IMAGE_MAX_BYTES", "1000")
     env.setenv("WORKER_PREFETCH", "4")
     env.setenv("RESULTS_QUEUE_DELIVERY_LIMIT", "5")
+    env.setenv("MODEL_PATH", "/models/yolox.onnx")
 
     settings = WorkerSettings()
 
@@ -53,6 +59,7 @@ def test_knobs_come_from_the_environment(env):
     assert settings.image_max_bytes == 1000
     assert settings.worker_prefetch == 4
     assert settings.results_queue.delivery_limit == 5
+    assert settings.model_path == Path("/models/yolox.onnx")
 
 
 @pytest.mark.parametrize(

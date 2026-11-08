@@ -1,9 +1,14 @@
 """The detector seam: ``detect(image) -> list[Detection]``."""
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from os import PathLike
 
+import cv2
 import numpy as np
+
+from analysis_service import yolox
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,20 @@ class Detection:
 Detect = Callable[[np.ndarray], list[Detection]]
 
 
-def detect_nobody(image: np.ndarray) -> list[Detection]:
-    """Stand-in detector until the real YOLOX-S one lands (ticket 06)."""
-    return []
+def load_detector(model_path: str | PathLike[str]) -> Detect:
+    """Load YOLOX-S once; the returned ``detect`` reuses it for every image."""
+    net = cv2.dnn.readNet(str(model_path))
+    # One net can't run two forward passes at once.
+    lock = threading.Lock()
+
+    def detect(image: np.ndarray) -> list[Detection]:
+        blob, ratio = yolox.letterbox(image)
+        with lock:
+            net.setInput(blob)
+            output = net.forward()
+        return [
+            Detection(x, y, width, height, score)
+            for x, y, width, height, score in yolox.people(output, ratio)
+        ]
+
+    return detect
