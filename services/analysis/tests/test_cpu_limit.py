@@ -1,6 +1,6 @@
 import pytest
 
-from analysis_service.detector import cpu_limit
+from analysis_service.worker import cpu_limit
 
 pytestmark = pytest.mark.unit
 
@@ -13,7 +13,8 @@ pytestmark = pytest.mark.unit
         ("50000 100000\n", 8, 1),  # --cpus=0.5
         ("1600000 100000\n", 8, 8),  # quota above the host is capped
         ("max 100000\n", 8, 8),  # no quota
-        (None, 4, 4),  # no cgroup v2 file
+        ("", 4, 4),  # no cgroup v2 file
+        ("garbage\n", 4, 4),  # unexpected formats fall back to the host
     ],
 )
 def test_threads_follow_the_container_cpu_quota(cpu_max, host_cpus, expected):

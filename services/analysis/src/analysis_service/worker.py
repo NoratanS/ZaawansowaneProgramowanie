@@ -5,10 +5,11 @@ Run with ``python -m analysis_service.worker``.
 
 import asyncio
 import logging
+import math
 import os
 import time
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -18,7 +19,7 @@ from faststream.rabbit import QueueType, RabbitQueue
 from faststream.rabbit.annotations import RabbitMessage
 from faststream.rabbit.schemas import Channel
 
-from analysis_service.detector import Detect, Detection, cpu_limit, load_detector
+from analysis_service.detector import Detect, Detection, load_detector
 from analysis_service.images import ImageFailure, decode_image, fetch_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
 from analysis_service.queues import (
@@ -143,12 +144,26 @@ def _log_outcome(result: AnalysisResult, started: float) -> None:
     )
 
 
+def cpu_limit(cpu_max: str, host_cpus: int) -> int:
+    """Whole CPUs a container may use, from cgroup v2 ``cpu.max`` text.
+
+    ``cpu_max`` is ``"<quota> <period>"`` or ``"max <period>"``. Text in any
+    other shape, such as ``""`` for no cgroup v2 file, leaves only ``host_cpus``.
+    """
+    try:
+        quota, period = cpu_max.split()
+        cpus = math.ceil(int(quota) / int(period))
+    except ValueError, ZeroDivisionError:
+        return host_cpus
+    return min(host_cpus, cpus)
+
+
 def _container_cpus() -> int:
     """CPUs this process may use: its affinity, capped by the cgroup quota."""
     try:
         cpu_max = Path("/sys/fs/cgroup/cpu.max").read_text()
     except OSError:
-        cpu_max = None
+        cpu_max = ""
     return cpu_limit(cpu_max, os.process_cpu_count() or 1)
 
 
