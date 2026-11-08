@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from typing import Annotated
 from uuid import UUID
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from results_service import store
@@ -13,6 +14,7 @@ from results_service.models import AnalysisResult
 from results_service.settings import ResultsSettings
 
 PORT = 8000
+UI_PAGE = files("results_service").joinpath("index.html").read_text()
 
 
 def create_app(settings: ResultsSettings) -> FastAPI:
@@ -38,6 +40,14 @@ def create_app(settings: ResultsSettings) -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    async def ui_page():
+        return UI_PAGE
+
+    @app.get("/ui-config")
+    async def ui_config():
+        return {"analysis_url": settings.analysis_base_url}
 
     @app.put(
         "/results/{job_id}",

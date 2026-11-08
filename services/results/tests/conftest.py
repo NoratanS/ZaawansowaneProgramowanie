@@ -20,12 +20,13 @@ def http_client(jwt_keys, mint_token):
     """Open a Results Service client for a database URL, with its lifespan running.
 
     The client sends a valid Courier token unless ``authorized`` is false.
+    ``overrides`` are passed on to ``ResultsSettings``.
     """
 
     @asynccontextmanager
-    async def open_client(database_url, authorized=True):
+    async def open_client(database_url, authorized=True, **overrides):
         settings = ResultsSettings(
-            database_url=database_url, jwt_public_key=jwt_keys.public
+            database_url=database_url, jwt_public_key=jwt_keys.public, **overrides
         )
         headers = {}
         if authorized:

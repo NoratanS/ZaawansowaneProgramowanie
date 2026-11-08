@@ -5,6 +5,7 @@ Each entrypoint has one settings class, built from the shared pieces below.
 
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from cryptography.hazmat.primitives.serialization import (
@@ -111,6 +112,12 @@ class AnalysisApiSettings(
     def results_base_url(self) -> str:
         """``results_public_url`` without the trailing slash ``HttpUrl`` may add."""
         return str(self.results_public_url).rstrip("/")
+
+    @property
+    def results_origin(self) -> str:
+        """Scheme, host and port of ``results_public_url``: where the UI runs."""
+        parts = urlsplit(str(self.results_public_url))
+        return f"{parts.scheme}://{parts.netloc}"
 
 
 class WorkerSettings(

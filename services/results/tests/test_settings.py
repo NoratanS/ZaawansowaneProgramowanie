@@ -79,3 +79,25 @@ def test_log_level_must_be_a_logging_level(monkeypatch):
 
     with pytest.raises(ValidationError, match="log_level"):
         ResultsSettings()
+
+
+@pytest.mark.unit
+def test_analysis_public_url_defaults_to_localhost(monkeypatch):
+    monkeypatch.delenv("ANALYSIS_PUBLIC_URL", raising=False)
+
+    assert ResultsSettings().analysis_base_url == "http://localhost:8000"
+
+
+@pytest.mark.unit
+def test_analysis_public_url_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("ANALYSIS_PUBLIC_URL", "https://analysis.example/")
+
+    assert ResultsSettings().analysis_base_url == "https://analysis.example"
+
+
+@pytest.mark.unit
+def test_analysis_public_url_must_be_http(monkeypatch):
+    monkeypatch.setenv("ANALYSIS_PUBLIC_URL", "ftp://analysis")
+
+    with pytest.raises(ValidationError, match="analysis_public_url"):
+        ResultsSettings()

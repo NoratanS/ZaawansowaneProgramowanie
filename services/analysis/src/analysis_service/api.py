@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import uvicorn
 from aiormq.exceptions import AMQPError, ChannelInvalidStateError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 
 from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
@@ -47,6 +48,15 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
             await broker.stop()
 
     app = FastAPI(title="Analysis Service", lifespan=lifespan)
+    # Lets the UI page on the Results Service submit. The middleware answers
+    # preflights itself, so they need no token.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.results_origin],
+        allow_methods=["POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
+    )
 
     @app.get("/health")
     async def health():
