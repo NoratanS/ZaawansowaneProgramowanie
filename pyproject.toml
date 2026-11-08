@@ -36,6 +36,8 @@ line-length = 88
 [tool.pytest.ini_options]
 testpaths = ["services", "tests"]
 addopts = ["--import-mode=importlib", "--strict-markers"]
+# Lets tests import shared doubles such as fakes.py.
+pythonpath = ["services/analysis/tests"]
 markers = [
     "unit: pure logic, no I/O",
     "integration: one service in-process against real RabbitMQ and/or Postgres",
