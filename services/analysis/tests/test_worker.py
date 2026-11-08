@@ -193,6 +193,22 @@ async def test_a_refused_connection_becomes_image_unreachable(
     assert json.loads(message.body)["error"]["code"] == "image_unreachable"
 
 
+async def test_the_image_request_names_the_app_in_its_user_agent(
+    worker_for, submit, next_message, httpserver
+):
+    # Wikimedia answers 403 to the default python-httpx User-Agent.
+    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
+
+    async with worker_for(FakeDetector()):
+        await submit(httpserver.url_for("/people.png"))
+        await next_message("analysis-results")
+
+    [(request, _)] = httpserver.log
+    assert request.headers["User-Agent"] == (
+        "people-counter/0.1 (+https://github.com/NoratanS/ZaawansowaneProgramowanie)"
+    )
+
+
 def slow_first_byte(request):
     time.sleep(5.5)  # past httpx's 5 s default timeout, within the 8 s limit
     return Response(png(4, 4), content_type="image/png")

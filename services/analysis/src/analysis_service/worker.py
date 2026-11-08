@@ -30,6 +30,11 @@ from analysis_service.queues import (
 from analysis_service.settings import WorkerSettings
 
 MODEL = "yolox-s"
+# Wikimedia answers 403 to the default python-httpx User-Agent; it wants
+# one that names the app and a contact: https://w.wiki/4wJS
+USER_AGENT = (
+    "people-counter/0.1 (+https://github.com/NoratanS/ZaawansowaneProgramowanie)"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     broker = confirming_broker(settings.rabbitmq_url)
     # No per-operation timeout: fetch_image enforces the total limit itself,
     # and httpx's 5 s default would cut it short when the limit is longer.
-    http = httpx.AsyncClient(timeout=None)
+    http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
     app = FastStream(broker)
 
     @app.on_startup
