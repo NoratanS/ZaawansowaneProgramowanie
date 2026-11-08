@@ -11,7 +11,9 @@ from pydantic import (
     model_validator,
 )
 
-ErrorCode = Literal["image_unreachable", "not_an_image", "image_too_large"]
+ErrorCode = Literal[
+    "image_unreachable", "not_an_image", "image_too_large", "image_url_forbidden"
+]
 
 
 def _to_utc(value: datetime) -> datetime:

@@ -76,6 +76,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
                 str(job.image_url),
                 timeout_seconds=settings.image_fetch_timeout_seconds,
                 max_bytes=settings.image_max_bytes,
+                allowed_hosts=settings.image_allowed_hosts,
             )
             image = await asyncio.to_thread(decode_image, data)
         except ImageFailure as failure:

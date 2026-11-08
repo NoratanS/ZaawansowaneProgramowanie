@@ -7,3 +7,8 @@ services:
     image: nginx:1.30.6-alpine
     volumes:
       - ./tests/e2e/fixtures:/usr/share/nginx/html:ro
+
+  worker:
+    environment:
+      # The Worker refuses internal hosts; this one serves the e2e fixtures.
+      IMAGE_ALLOWED_HOSTS: images

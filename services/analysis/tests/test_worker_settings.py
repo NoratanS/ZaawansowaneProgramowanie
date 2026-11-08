@@ -34,6 +34,7 @@ def test_defaults_follow_the_spec(env):
     assert settings.image_fetch_timeout_seconds == 10
     assert settings.image_max_bytes == 10 * 1024 * 1024
     assert settings.worker_prefetch == 1
+    assert settings.image_allowed_hosts == frozenset()
     assert settings.model_path == Path(
         "/opt/models/object_detection_yolox_2022nov.onnx"
     )
@@ -60,6 +61,20 @@ def test_knobs_come_from_the_environment(env):
     assert settings.worker_prefetch == 4
     assert settings.results_queue.delivery_limit == 5
     assert settings.model_path == Path("/models/yolox.onnx")
+
+
+@pytest.mark.parametrize(
+    ("value", "hosts"),
+    [
+        ("images", {"images"}),
+        (" images , Wikimedia.ORG ,", {"images", "wikimedia.org"}),
+        ("", set()),
+    ],
+)
+def test_allowed_hosts_are_a_comma_separated_list(env, value, hosts):
+    env.setenv("IMAGE_ALLOWED_HOSTS", value)
+
+    assert WorkerSettings().image_allowed_hosts == hosts
 
 
 @pytest.mark.parametrize(
