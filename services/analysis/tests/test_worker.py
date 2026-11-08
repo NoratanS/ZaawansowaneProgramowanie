@@ -13,11 +13,9 @@ from werkzeug import Response
 
 from fakes import FakeDetector, png
 
-from analysis_service import worker
 from analysis_service.detector import Detection
 from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
 from analysis_service.settings import WorkerSettings
-from analysis_service.uploads import UPLOADS_BUCKET
 from analysis_service.worker import build_worker
 
 pytestmark = pytest.mark.integration
@@ -240,75 +238,3 @@ async def test_each_job_logs_one_info_line(
         r" person_count=None duration_ms=\d+",
         failed,
     )
-
-
-@pytest.fixture
-async def stored_upload(s3_client, upload_settings):
-    """Put an object in the upload store as the API would; return its URL."""
-    await s3_client.create_bucket(Bucket=UPLOADS_BUCKET)
-    uploads_url = f"{upload_settings['analysis_public_url']}/uploads"
-
-    async def put(data, content_type="image/png"):
-        upload_id = str(uuid4())
-        await s3_client.put_object(
-            Bucket=UPLOADS_BUCKET, Key=upload_id, Body=data, ContentType=content_type
-        )
-        return f"{uploads_url}/{upload_id}"
-
-    return put
-
-
-async def test_an_uploaded_photo_is_read_from_the_store_not_fetched(
-    worker_for, submit, next_message, stored_upload, monkeypatch
-):
-    def no_fetch(*args, **kwargs):
-        raise AssertionError("an upload must not be fetched over HTTP")
-
-    monkeypatch.setattr(worker, "fetch_image", no_fetch)
-    detect = FakeDetector([Detection(x=1, y=1, width=4, height=4, confidence=0.8)])
-
-    async with worker_for(detect):
-        job = await submit(await stored_upload(png(width=40, height=30)))
-        message = await next_message(RESULTS_QUEUE)
-
-    result = json.loads(message.body)
-    assert result["job_id"] == job["job_id"]
-    assert result["image_url"] == job["image_url"]
-    assert result["status"] == "succeeded"
-    assert result["person_count"] == 1
-    [image] = detect.images
-    assert image.shape == (30, 40, 3)
-
-
-UPLOAD_FAILURES = {
-    "text": (b"hello", "not_an_image"),
-    "oversize": (b"x" * 20_000, "image_too_large"),
-}
-
-
-@pytest.mark.parametrize(
-    ("data", "code"), UPLOAD_FAILURES.values(), ids=UPLOAD_FAILURES.keys()
-)
-async def test_a_bad_upload_becomes_a_failed_result(
-    worker_for, submit, next_message, stored_upload, data, code
-):
-    async with worker_for(FakeDetector()):
-        await submit(await stored_upload(data, content_type="text/plain"))
-        message = await next_message(RESULTS_QUEUE)
-
-    assert json.loads(message.body)["error"]["code"] == code
-
-
-@pytest.mark.parametrize("upload_id", [uuid4(), "not-an-id"], ids=["missing", "bad-id"])
-async def test_an_upload_that_isnt_there_is_unreachable(
-    worker_for, submit, next_message, stored_upload, upload_settings, drain, upload_id
-):
-    # stored_upload is only here for its bucket: the object is what's missing.
-    async with worker_for(FakeDetector()):
-        await submit(f"{upload_settings['analysis_public_url']}/uploads/{upload_id}")
-        message = await next_message(RESULTS_QUEUE)
-        # Long enough for a redelivery at the 50 ms retry delay to show up.
-        await asyncio.sleep(0.3)
-
-    assert json.loads(message.body)["error"]["code"] == "image_unreachable"
-    assert await drain(JOBS_QUEUE) == []

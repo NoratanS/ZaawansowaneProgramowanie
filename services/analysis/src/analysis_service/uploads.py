@@ -14,7 +14,7 @@ from aiobotocore.session import get_session
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from analysis_service.images import ImageFailure
+from analysis_service.images import ImageFailure, read_capped
 from analysis_service.settings import UploadSettings
 
 UPLOADS_BUCKET = "uploads"
@@ -73,21 +73,16 @@ class UploadStore:
         async with self.open(upload_id) as upload:
             if upload is None:
                 raise ImageFailure("image_unreachable", "the upload does not exist")
-            too_large = ImageFailure(
-                "image_too_large", f"the image is over the {max_bytes}-byte limit"
-            )
-            if upload.length > max_bytes:
-                raise too_large
-            body = bytearray()
-            async for chunk in upload.chunks:
-                body += chunk
-                if len(body) > max_bytes:
-                    raise too_large
-            return body
+            return await read_capped(upload.chunks, max_bytes, length=upload.length)
 
 
 def _status(exc: ClientError) -> int | None:
     return exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+
+
+def url_for(upload_id: UUID, uploads_base_url: str) -> str:
+    """The URL an Analysis Job carries for this upload."""
+    return f"{uploads_base_url.rstrip('/')}/{upload_id}"
 
 
 def upload_id_in(url: str, uploads_base_url: str) -> UUID | None:
@@ -96,7 +91,7 @@ def upload_id_in(url: str, uploads_base_url: str) -> UUID | None:
     A URL under the uploads path whose last part isn't an id names no upload,
     so it fails like a missing one.
     """
-    prefix = uploads_base_url + "/"
+    prefix = uploads_base_url.rstrip("/") + "/"
     if not url.startswith(prefix):
         return None
     try:

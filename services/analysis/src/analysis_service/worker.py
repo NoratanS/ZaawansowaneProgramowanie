@@ -19,11 +19,12 @@ import httpx
 from faststream import FastStream
 
 from analysis_service.detector import Detect, Detection, load_detector
-from analysis_service.images import ImageFailure, decode_image, fetch_image
+from analysis_service.image_source import ImageSource
+from analysis_service.images import ImageFailure, decode_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
 from analysis_service.queues import Action, Queue, confirming_broker
 from analysis_service.settings import WorkerSettings
-from analysis_service.uploads import UploadStore, open_store, upload_id_in
+from analysis_service.uploads import open_store
 
 MODEL = "yolox-s"
 # Wikimedia answers 403 to the default python-httpx User-Agent; it wants
@@ -73,56 +74,38 @@ async def analyse(
     return result(status="succeeded", person_count=len(boxes), detections=boxes)
 
 
-class _ImageLoader:
-    """The Worker's ``load_image``: uploads from the store, other URLs over HTTP.
-
-    Call ``open`` at startup, before the first image is loaded.
-    """
+class _ImageResources:
+    """The Worker's HTTP client and Upload store, opened at startup."""
 
     def __init__(self, settings: WorkerSettings) -> None:
         self._settings = settings
-        # No per-operation timeout: fetch_image enforces the total limit itself,
-        # and httpx's 5 s default would cut it short when the limit is longer.
-        self._http = httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
         self._resources = AsyncExitStack()
-        self._resources.push_async_callback(self._http.aclose)
-        self._store: UploadStore | None = None
+        self.source: ImageSource | None = None
 
     async def open(self) -> None:
-        # The API creates the bucket, not the Worker.
-        self._store = await self._resources.enter_async_context(
-            open_store(self._settings)
+        # No per-operation timeout: fetch_image enforces the total limit itself,
+        # and httpx's 5 s default would cut it short when the limit is longer.
+        http = await self._resources.enter_async_context(
+            httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
         )
+        # The API creates the bucket, not the Worker.
+        store = await self._resources.enter_async_context(open_store(self._settings))
+        self.source = ImageSource(http, store, self._settings)
 
     async def aclose(self) -> None:
         await self._resources.aclose()
-
-    async def __call__(self, image_url: str) -> bytearray:
-        settings = self._settings
-        # Uploads are read by key, so the SSRF guard has nothing to check.
-        if (
-            upload_id := upload_id_in(image_url, settings.uploads_base_url)
-        ) is not None:
-            return await self._store.read_image(upload_id, settings.image_max_bytes)
-        return await fetch_image(
-            self._http,
-            image_url,
-            timeout_seconds=settings.image_fetch_timeout_seconds,
-            max_bytes=settings.image_max_bytes,
-            allowed_hosts=settings.image_allowed_hosts,
-        )
 
 
 def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     broker = confirming_broker(settings.rabbitmq_url)
     jobs = Queue(broker, settings.jobs_queue)
     results = Queue(broker, settings.results_queue)
-    load_image = _ImageLoader(settings)
+    images = _ImageResources(settings)
     app = FastStream(broker)
 
     @app.on_startup
     async def start() -> None:
-        await load_image.open()
+        await images.open()
         # Declare before the subscriber starts consuming from analysis-jobs.
         await broker.connect()
         await jobs.declare()
@@ -130,7 +113,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
 
     @app.after_shutdown
     async def close() -> None:
-        await load_image.aclose()
+        await images.aclose()
 
     # Errors raise: the queue module retries the job, then dead-letters it.
     async def handle_job(
@@ -138,7 +121,7 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     ) -> Action:
         started = time.perf_counter()
         job = AnalysisJob.model_validate_json(body)
-        result = await analyse(job, load_image, detect)
+        result = await analyse(job, images.source.load, detect)
         await results.publish(result, message_id=str(job.job_id))
         _log_outcome(result, started)
         return Action.ACK

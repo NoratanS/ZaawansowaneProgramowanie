@@ -10,7 +10,12 @@ import numpy as np
 import pytest
 
 from analysis_service import images
-from analysis_service.images import ImageFailure, decode_image, fetch_image
+from analysis_service.images import (
+    ImageFailure,
+    decode_image,
+    fetch_image,
+    read_capped,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -221,6 +226,39 @@ async def test_a_body_exactly_at_the_cap_is_fine():
     )
 
     assert len(body) == 100
+
+
+async def stream(*chunks):
+    for chunk in chunks:
+        yield chunk
+
+
+@pytest.mark.parametrize("size", [99, 100], ids=["under", "at"])
+async def test_chunks_up_to_the_cap_are_read_whole(size):
+    data = bytes(range(size))
+
+    body = await read_capped(stream(data[:40], data[40:]), max_bytes=100)
+
+    assert body == data
+
+
+async def test_chunks_over_the_cap_are_too_large():
+    with pytest.raises(ImageFailure) as failure:
+        await read_capped(stream(b"x" * 60, b"x" * 41), max_bytes=100)
+
+    assert failure.value.code == "image_too_large"
+    assert failure.value.message == "the image is over the 100-byte limit"
+
+
+async def test_a_declared_length_over_the_cap_is_too_large_before_reading():
+    async def unread():
+        raise AssertionError("the body must not be read")
+        yield
+
+    with pytest.raises(ImageFailure) as failure:
+        await read_capped(unread(), max_bytes=100, length=101)
+
+    assert failure.value.code == "image_too_large"
 
 
 def test_a_real_image_decodes_to_its_pixels():

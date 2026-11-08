@@ -3,7 +3,7 @@
 import asyncio
 import ipaddress
 import socket
-from collections.abc import Collection
+from collections.abc import AsyncIterable, Collection
 
 import cv2
 import httpx
@@ -86,19 +86,33 @@ async def _download(client: httpx.AsyncClient, url: str, max_bytes: int) -> byte
             raise ImageFailure(
                 "image_unreachable", f"the image host answered {response.status_code}"
             )
-        too_large = ImageFailure(
-            "image_too_large", f"the image is over the {max_bytes}-byte limit"
-        )
         length = response.headers.get("Content-Length", "")
-        if length.isdigit() and int(length) > max_bytes:
+        return await read_capped(
+            response.aiter_bytes(),
+            max_bytes,
+            length=int(length) if length.isdigit() else None,
+        )
+
+
+async def read_capped(
+    chunks: AsyncIterable[bytes], max_bytes: int, *, length: int | None = None
+) -> bytearray:
+    """Read ``chunks`` whole, failing once they pass ``max_bytes``.
+
+    A declared ``length`` over the cap fails before anything is read. It may
+    lie or be missing, so the body is capped as it arrives too.
+    """
+    too_large = ImageFailure(
+        "image_too_large", f"the image is over the {max_bytes}-byte limit"
+    )
+    if length is not None and length > max_bytes:
+        raise too_large
+    body = bytearray()
+    async for chunk in chunks:
+        body += chunk
+        if len(body) > max_bytes:
             raise too_large
-        # The header may lie or be missing, so cap the body as it arrives.
-        body = bytearray()
-        async for chunk in response.aiter_bytes():
-            body += chunk
-            if len(body) > max_bytes:
-                raise too_large
-        return body
+    return body
 
 
 def decode_image(data: bytes | bytearray) -> np.ndarray:
