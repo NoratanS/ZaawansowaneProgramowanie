@@ -5,17 +5,20 @@ Run with ``python -m analysis_service.worker``.
 
 import asyncio
 import logging
+import os
 import time
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 
+import cv2
 import httpx
 from faststream import AckPolicy, FastStream
 from faststream.rabbit import QueueType, RabbitQueue
 from faststream.rabbit.annotations import RabbitMessage
 from faststream.rabbit.schemas import Channel
 
-from analysis_service.detector import Detect, Detection, detect_nobody
+from analysis_service.detector import Detect, Detection, cpu_limit, load_detector
 from analysis_service.images import ImageFailure, decode_image, fetch_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
 from analysis_service.queues import (
@@ -140,9 +143,23 @@ def _log_outcome(result: AnalysisResult, started: float) -> None:
     )
 
 
+def _container_cpus() -> int:
+    """CPUs this process may use: its affinity, capped by the cgroup quota."""
+    try:
+        cpu_max = Path("/sys/fs/cgroup/cpu.max").read_text()
+    except OSError:
+        cpu_max = None
+    return cpu_limit(cpu_max, os.process_cpu_count() or 1)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(build_worker(WorkerSettings(), detect_nobody).run())
+    settings = WorkerSettings()
+    # Without the cap OpenCV starts a thread per host core, and replicas
+    # with a CPU quota fight over them.
+    cv2.setNumThreads(_container_cpus())
+    detect = load_detector(settings.model_path)
+    asyncio.run(build_worker(settings, detect).run())
 
 
 if __name__ == "__main__":

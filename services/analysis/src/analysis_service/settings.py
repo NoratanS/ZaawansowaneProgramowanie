@@ -3,6 +3,7 @@
 Each entrypoint has one settings class, built from the shared pieces below.
 """
 
+from pathlib import Path
 from typing import Annotated, Self
 
 from pydantic import Field, HttpUrl, model_validator
@@ -11,6 +12,8 @@ from pydantic_settings import BaseSettings
 from analysis_service.queues import QueueConfig
 
 JOBS_QUEUE = "analysis-jobs"
+# Where the Analysis image bakes YOLOX-S (see services/analysis/Dockerfile).
+BAKED_MODEL_PATH = Path("/opt/models/object_detection_yolox_2022nov.onnx")
 RESULTS_QUEUE = "analysis-results"
 
 Seconds = Annotated[float, Field(gt=0)]
@@ -79,6 +82,7 @@ class WorkerSettings(BrokerSettings, JobsQueueSettings, ResultsQueueSettings):
     image_fetch_timeout_seconds: Seconds = 10
     image_max_bytes: Limit = 10 * 1024 * 1024
     worker_prefetch: Limit = 1
+    model_path: Path = BAKED_MODEL_PATH
 
 
 class CourierSettings(BrokerSettings, ResultsQueueSettings):
