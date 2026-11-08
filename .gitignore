@@ -236,4 +236,5 @@ desktop.ini
 learning/
 .scratch/
 CLAUDE.md
-docs/
+docs/*
+!docs/demo.md
