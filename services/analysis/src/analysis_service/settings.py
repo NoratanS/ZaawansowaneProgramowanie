@@ -79,3 +79,16 @@ class WorkerSettings(BrokerSettings, JobsQueueSettings, ResultsQueueSettings):
     image_fetch_timeout_seconds: Seconds = 10
     image_max_bytes: Limit = 10 * 1024 * 1024
     worker_prefetch: Limit = 1
+
+
+class CourierSettings(BrokerSettings, ResultsQueueSettings):
+    """Courier settings."""
+
+    results_service_url: HttpUrl
+    delivery_timeout_seconds: Seconds = 10
+    courier_prefetch: Limit = 10
+
+    @property
+    def results_service_base_url(self) -> str:
+        """``results_service_url`` without the trailing slash ``HttpUrl`` may add."""
+        return str(self.results_service_url).rstrip("/")
