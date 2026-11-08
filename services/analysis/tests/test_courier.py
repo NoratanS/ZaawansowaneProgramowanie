@@ -12,6 +12,7 @@ import pytest
 from werkzeug import Response
 
 from analysis_service.courier import build_courier
+from analysis_service.queues import RESULTS_QUEUE
 from analysis_service.settings import CourierSettings
 
 pytestmark = pytest.mark.integration
@@ -56,7 +57,7 @@ def publish(channel):
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 message_id=message_id,
             ),
-            routing_key="analysis-results",
+            routing_key=RESULTS_QUEUE,
         )
 
     return publish_body
@@ -178,8 +179,8 @@ async def test_a_stored_result_is_acked(
     assert request.headers["Content-Type"] == "application/json"
     assert request.get_data() == body
     # The Courier has stopped, so an unacked message would be back in the queue.
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-results.dlq") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(f"{RESULTS_QUEUE}.dlq") == []
 
 
 TRANSIENT = {
@@ -210,8 +211,8 @@ async def test_a_transient_failure_is_retried_then_delivered(
     assert warning.startswith(f"job_id={job_id} retrying cause=")
     assert warning.endswith(" x-delivery-count=0")
     assert courier_logs(logging.ERROR) == []
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-results.dlq") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(f"{RESULTS_QUEUE}.dlq") == []
 
 
 async def test_503_503_201_ends_delivered(
@@ -230,8 +231,8 @@ async def test_503_503_201_ends_delivered(
         f"job_id={job_id} retrying cause=HTTP 503 x-delivery-count=1",
     ]
     assert courier_logs(logging.INFO) == [f"job_id={job_id} delivered status=201"]
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-results.dlq") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(f"{RESULTS_QUEUE}.dlq") == []
 
 
 async def test_a_result_that_never_lands_is_dead_lettered_after_the_limit(
@@ -241,13 +242,13 @@ async def test_a_result_that_never_lands_is_dead_lettered_after_the_limit(
 
     async with courier_for(results_queue_delivery_limit=3):
         job_id, body = await publish_result()
-        dead = await next_message("analysis-results.dlq")
+        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
         await settle()
 
     assert dead.body == body
     # x-delivery-limit counts failed returns: one try plus 3 retries.
     assert len(httpserver.log) == 1 + 3
-    assert await drain("analysis-results") == []
+    assert await drain(RESULTS_QUEUE) == []
 
 
 async def test_a_closed_port_is_retried_until_the_dlq(
@@ -256,7 +257,7 @@ async def test_a_closed_port_is_retried_until_the_dlq(
     # Nothing listens on port 1.
     async with courier_for(results_service_url="http://127.0.0.1:1"):
         job_id, body = await publish_result()
-        dead = await next_message("analysis-results.dlq")
+        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
 
     assert dead.body == body
     warnings = courier_logs(logging.WARNING)
@@ -272,7 +273,7 @@ async def test_a_rejected_result_goes_straight_to_the_dlq(
 
     async with courier_for():
         job_id, body = await publish_result()
-        dead = await next_message("analysis-results.dlq")
+        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
         await settle()
 
     assert dead.body == body
@@ -280,7 +281,7 @@ async def test_a_rejected_result_goes_straight_to_the_dlq(
         f"job_id={job_id} dead-lettered cause=HTTP {status}"
     ]
     assert courier_logs(logging.WARNING) == []
-    assert await drain("analysis-results") == []
+    assert await drain(RESULTS_QUEUE) == []
 
 
 @pytest.mark.parametrize(
@@ -293,7 +294,7 @@ async def test_a_message_without_a_job_id_is_dead_lettered_unsent(
 ):
     async with courier_for():
         await publish(body)
-        dead = await next_message("analysis-results.dlq")
+        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
 
     assert dead.body == body
     assert httpserver.log == []

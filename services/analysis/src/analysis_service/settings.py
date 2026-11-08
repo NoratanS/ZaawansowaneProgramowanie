@@ -15,12 +15,10 @@ from cryptography.hazmat.primitives.serialization import (
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
-from analysis_service.queues import QueueConfig
+from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE, QueueConfig
 
-JOBS_QUEUE = "analysis-jobs"
 # Where the Analysis image bakes YOLOX-S (see services/analysis/Dockerfile).
 BAKED_MODEL_PATH = Path("/opt/models/object_detection_yolox_2022nov.onnx")
-RESULTS_QUEUE = "analysis-results"
 
 Seconds = Annotated[float, Field(gt=0)]
 Limit = Annotated[int, Field(ge=1)]

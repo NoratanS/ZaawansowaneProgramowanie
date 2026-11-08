@@ -3,6 +3,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from analysis_service.queues import JOBS_QUEUE
+
 pytestmark = pytest.mark.integration
 
 JPEG = b"\xff\xd8\xff\xe0 not really a jpeg"
@@ -27,7 +29,7 @@ async def test_each_uploaded_file_becomes_a_queued_job(client, drain, stored_key
     for item in accepted:
         job_id = UUID(item["job_id"])
         assert item["result_url"] == f"http://results.example/results/{job_id}"
-    jobs = [json.loads(m.body) for m in await drain("analysis-jobs")]
+    jobs = [json.loads(m.body) for m in await drain(JOBS_QUEUE)]
     assert [job["job_id"] for job in jobs] == [item["job_id"] for item in accepted]
     upload_ids = []
     for job in jobs:
@@ -45,7 +47,7 @@ async def test_a_hundred_files_are_accepted(client, drain):
     response = await client.post("/uploads", files=jpegs(100))
 
     assert response.status_code == 202
-    assert len(await drain("analysis-jobs")) == 100
+    assert len(await drain(JOBS_QUEUE)) == 100
 
 
 @pytest.mark.parametrize(
@@ -72,7 +74,7 @@ async def test_a_broken_limit_rejects_the_whole_request(
         response = await client.post("/uploads", data={"other": "field"})
 
     assert response.status_code == code
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
     assert await stored_keys() == []
 
 
@@ -81,7 +83,7 @@ async def test_uploads_need_a_client_token(anonymous_client, drain, stored_keys)
 
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
     assert await stored_keys() == []
 
 
@@ -91,11 +93,11 @@ async def test_uploads_refuse_a_courier_token(client, mint_token, drain):
     response = await client.post("/uploads", files=jpegs(1), headers=courier)
 
     assert response.status_code == 401
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_an_unqueued_upload_gives_503(client, channel):
-    await channel.queue_delete("analysis-jobs")
+    await channel.queue_delete(JOBS_QUEUE)
 
     response = await client.post("/uploads", files=jpegs(2))
 
@@ -107,7 +109,7 @@ async def upload_one(client, drain, name, data, content_type):
         "/uploads", files=[("files", (name, data, content_type))]
     )
     assert response.status_code == 202
-    [message] = await drain("analysis-jobs")
+    [message] = await drain(JOBS_QUEUE)
     return json.loads(message.body)["image_url"].removeprefix("http://analysis.example")
 
 

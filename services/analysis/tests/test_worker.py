@@ -16,6 +16,7 @@ from werkzeug import Response
 
 from analysis_service import worker
 from analysis_service.detector import Detection
+from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
 from analysis_service.settings import WorkerSettings
 from analysis_service.uploads import UPLOADS_BUCKET
 from analysis_service.worker import build_worker
@@ -86,7 +87,7 @@ def submit(channel):
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 message_id=job["job_id"],
             ),
-            routing_key="analysis-jobs",
+            routing_key=JOBS_QUEUE,
         )
         return job
 
@@ -110,7 +111,7 @@ async def test_a_job_becomes_a_succeeded_result(
 
     async with worker_for(detect):
         job = await submit(httpserver.url_for("/people.png"))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
 
     assert message.delivery_mode == aio_pika.DeliveryMode.PERSISTENT
     assert message.message_id == job["job_id"]
@@ -135,7 +136,7 @@ async def test_a_job_becomes_a_succeeded_result(
     [image] = detect.images
     assert image.shape == (30, 40, 3)
     # The Worker has stopped, so an unacked job would be back in the queue.
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 def stalled(request):
@@ -169,7 +170,7 @@ async def test_a_bad_image_becomes_a_failed_result_without_retry(
 
     async with worker_for(detect):
         job = await submit(httpserver.url_for("/image"))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
         # Long enough for several redeliveries at the 50 ms retry delay.
         await asyncio.sleep(0.6)
 
@@ -183,8 +184,8 @@ async def test_a_bad_image_becomes_a_failed_result_without_retry(
     assert result["model"] == "yolox-s"
     assert len(httpserver.log) == 1
     assert detect.images == []
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-jobs") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_a_refused_connection_becomes_image_unreachable(
@@ -193,7 +194,7 @@ async def test_a_refused_connection_becomes_image_unreachable(
     async with worker_for(FakeDetector()):
         # Nothing listens on port 1.
         await submit("http://localhost:1/people.png")
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
 
     assert json.loads(message.body)["error"]["code"] == "image_unreachable"
 
@@ -206,7 +207,7 @@ async def test_an_internal_url_becomes_a_forbidden_result_without_a_request(
 
     async with worker_for(detect, image_allowed_hosts=frozenset()):
         job = await submit(httpserver.url_for("/people.png"))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
         # Long enough for several redeliveries at the 50 ms retry delay.
         await asyncio.sleep(0.6)
 
@@ -216,8 +217,8 @@ async def test_an_internal_url_becomes_a_forbidden_result_without_a_request(
     assert result["error"]["code"] == "image_url_forbidden"
     assert httpserver.log == []
     assert detect.images == []
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-jobs") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_the_image_request_names_the_app_in_its_user_agent(
@@ -228,7 +229,7 @@ async def test_the_image_request_names_the_app_in_its_user_agent(
 
     async with worker_for(FakeDetector()):
         await submit(httpserver.url_for("/people.png"))
-        await next_message("analysis-results")
+        await next_message(RESULTS_QUEUE)
 
     [(request, _)] = httpserver.log
     assert request.headers["User-Agent"] == (
@@ -248,7 +249,7 @@ async def test_the_fetch_limit_is_not_cut_short_by_httpx_defaults(
 
     async with worker_for(FakeDetector(), image_fetch_timeout_seconds=8):
         await submit(httpserver.url_for("/slow.png"))
-        message = await next_message("analysis-results", timeout=10)
+        message = await next_message(RESULTS_QUEUE, timeout=10)
 
     assert json.loads(message.body)["status"] == "succeeded"
 
@@ -268,7 +269,7 @@ async def test_decoding_runs_off_the_event_loop(
 
     async with worker_for(FakeDetector()):
         await submit(httpserver.url_for("/people.png"))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
 
     assert json.loads(message.body)["status"] == "succeeded"
     # A blocking decode on the loop thread would stall heartbeats and other jobs.
@@ -283,7 +284,7 @@ async def test_a_job_that_keeps_crashing_is_dead_lettered_after_the_limit(
 
     async with worker_for(detect, jobs_queue_delivery_limit=3):
         job = await submit(httpserver.url_for("/people.png"))
-        dead = await next_message("analysis-jobs.dlq")
+        dead = await next_message(f"{JOBS_QUEUE}.dlq")
         # Give a stray extra delivery the chance to show up.
         await asyncio.sleep(0.3)
 
@@ -291,8 +292,8 @@ async def test_a_job_that_keeps_crashing_is_dead_lettered_after_the_limit(
     # RabbitMQ's x-delivery-limit counts failed returns, so the job is tried
     # once and retried 3 times (the spec's ~12 s window is 2 + 4 + 6 s).
     assert len(detect.images) == 1 + 3
-    assert await drain("analysis-results") == []
-    assert await drain("analysis-jobs") == []
+    assert await drain(RESULTS_QUEUE) == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 @pytest.mark.parametrize("results_queue", ["refusing", "missing"])
@@ -303,20 +304,20 @@ async def test_a_job_is_not_acked_when_its_result_is_not_confirmed(
     detect = FakeDetector()
 
     async with worker_for(detect, jobs_queue_delivery_limit=2):
-        await channel.queue_delete("analysis-results")
+        await channel.queue_delete(RESULTS_QUEUE)
         if results_queue == "refusing":
             # A queue that refuses every message, so the broker nacks.
             await channel.declare_queue(
-                "analysis-results",
+                RESULTS_QUEUE,
                 durable=True,
                 arguments={"x-max-length": 0, "x-overflow": "reject-publish"},
             )
         job = await submit(httpserver.url_for("/people.png"))
-        dead = await next_message("analysis-jobs.dlq")
+        dead = await next_message(f"{JOBS_QUEUE}.dlq")
 
     assert json.loads(dead.body)["job_id"] == job["job_id"]
     assert len(detect.images) == 1 + 2
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 def job_lines(caplog):
@@ -337,9 +338,9 @@ async def test_each_job_logs_one_info_line(
 
     async with worker_for(one_person):
         good = await submit(httpserver.url_for("/people.png"))
-        await next_message("analysis-results")
+        await next_message(RESULTS_QUEUE)
         bad = await submit(httpserver.url_for("/missing"))
-        await next_message("analysis-results")
+        await next_message(RESULTS_QUEUE)
 
     succeeded, failed = job_lines(caplog)
     assert re.fullmatch(
@@ -380,7 +381,7 @@ async def test_an_uploaded_photo_is_read_from_the_store_not_fetched(
 
     async with worker_for(detect):
         job = await submit(await stored_upload(png(width=40, height=30)))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
 
     result = json.loads(message.body)
     assert result["job_id"] == job["job_id"]
@@ -405,7 +406,7 @@ async def test_a_bad_upload_becomes_a_failed_result(
 ):
     async with worker_for(FakeDetector()):
         await submit(await stored_upload(data, content_type="text/plain"))
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
 
     assert json.loads(message.body)["error"]["code"] == code
 
@@ -417,9 +418,9 @@ async def test_an_upload_that_isnt_there_is_unreachable(
     # stored_upload is only here for its bucket: the object is what's missing.
     async with worker_for(FakeDetector()):
         await submit(f"{upload_settings['analysis_public_url']}/uploads/{upload_id}")
-        message = await next_message("analysis-results")
+        message = await next_message(RESULTS_QUEUE)
         # Long enough for a redelivery at the 50 ms retry delay to show up.
         await asyncio.sleep(0.3)
 
     assert json.loads(message.body)["error"]["code"] == "image_unreachable"
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []

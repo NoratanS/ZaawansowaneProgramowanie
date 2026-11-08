@@ -1,5 +1,7 @@
 import pytest
 
+from analysis_service.queues import JOBS_QUEUE
+
 pytestmark = pytest.mark.integration
 
 IMAGE_URL = "https://images.example/people.jpg"
@@ -16,7 +18,7 @@ async def test_post_without_a_token_is_401_and_nothing_is_queued(
     response = await anonymous_client.post("/analyses", json={"image_url": IMAGE_URL})
 
     assert_unauthorized(response)
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_post_with_a_bad_token_is_401_and_nothing_is_queued(
@@ -31,7 +33,7 @@ async def test_post_with_a_bad_token_is_401_and_nothing_is_queued(
     )
 
     assert_unauthorized(response)
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_post_with_a_non_bearer_scheme_is_401(anonymous_client, mint_token):

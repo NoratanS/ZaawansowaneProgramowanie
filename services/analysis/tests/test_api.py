@@ -6,6 +6,8 @@ from uuid import UUID
 import aio_pika
 import pytest
 
+from analysis_service.queues import JOBS_QUEUE
+
 pytestmark = pytest.mark.integration
 
 IMAGE_URL = "https://images.example/people.jpg"
@@ -22,7 +24,7 @@ async def test_analysis_request_is_accepted_and_queued(client, drain):
     assert body["result_url"] == f"http://results.example/results/{job_id}"
     assert response.headers["location"] == body["result_url"]
 
-    [message] = await drain("analysis-jobs")
+    [message] = await drain(JOBS_QUEUE)
     assert message.delivery_mode == aio_pika.DeliveryMode.PERSISTENT
     job = json.loads(message.body)
     assert job.keys() == {"job_id", "image_url", "requested_at"}
@@ -52,7 +54,7 @@ async def test_same_image_twice_gets_two_jobs(client, drain):
     second = await client.post("/analyses", json={"image_url": IMAGE_URL})
 
     assert first.json()["job_id"] != second.json()["job_id"]
-    queued = [json.loads(m.body)["job_id"] for m in await drain("analysis-jobs")]
+    queued = [json.loads(m.body)["job_id"] for m in await drain(JOBS_QUEUE)]
     assert queued == [first.json()["job_id"], second.json()["job_id"]]
 
 
@@ -73,11 +75,11 @@ async def test_bad_image_url_is_rejected_and_nothing_is_queued(client, drain, bo
     response = await client.post("/analyses", json=body)
 
     assert response.status_code == 422
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_unroutable_publish_gives_503(client, channel):
-    await channel.queue_delete("analysis-jobs")
+    await channel.queue_delete(JOBS_QUEUE)
 
     response = await client.post("/analyses", json={"image_url": IMAGE_URL})
 
@@ -86,9 +88,9 @@ async def test_unroutable_publish_gives_503(client, channel):
 
 async def test_publish_nacked_by_the_broker_gives_503(client, channel, drain):
     # Swap in a queue that refuses every message, so the broker nacks.
-    await channel.queue_delete("analysis-jobs")
+    await channel.queue_delete(JOBS_QUEUE)
     await channel.declare_queue(
-        "analysis-jobs",
+        JOBS_QUEUE,
         durable=True,
         arguments={"x-max-length": 0, "x-overflow": "reject-publish"},
     )
@@ -96,7 +98,7 @@ async def test_publish_nacked_by_the_broker_gives_503(client, channel, drain):
     response = await client.post("/analyses", json={"image_url": IMAGE_URL})
 
     assert response.status_code == 503
-    assert await drain("analysis-jobs") == []
+    assert await drain(JOBS_QUEUE) == []
 
 
 async def test_lost_broker_connection_gives_503(client, rabbitmq):

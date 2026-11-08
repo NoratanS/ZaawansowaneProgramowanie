@@ -1,13 +1,18 @@
-"""Queue topology shared by every process that touches a queue.
+"""The work queues: their topology, and publishing to and consuming from them.
 
 Each queue is a quorum queue with native delayed retry and a delivery limit.
 After the limit, the broker dead-letters the message through ``<queue>.dlx``
 (fanout) into ``<queue>.dlq``. All of it is declared from code, not policies.
 """
 
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
+from aiormq.exceptions import AMQPError, ChannelInvalidStateError
+from faststream import AckPolicy
 from faststream.rabbit import (
     ExchangeType,
     QueueType,
@@ -15,10 +20,30 @@ from faststream.rabbit import (
     RabbitExchange,
     RabbitQueue,
 )
+from faststream.rabbit.annotations import RabbitMessage
 from faststream.rabbit.schemas import Channel
+
+JOBS_QUEUE = "analysis-jobs"
+RESULTS_QUEUE = "analysis-results"
 
 # How long a publisher waits for the broker to confirm a message.
 PUBLISH_TIMEOUT_SECONDS = 5.0
+
+logger = logging.getLogger(__name__)
+
+
+class Action(Enum):
+    ACK = "ack"
+    RETRY = "retry"  # reject(requeue=True): delayed retry, then the DLQ
+    DEAD_LETTER = "dead_letter"  # reject(requeue=False): straight to the DLQ
+
+
+# Gets a message's raw body, headers and message_id; says what to do with it.
+Handler = Callable[[bytes, Mapping[str, Any], str | None], Awaitable[Action]]
+
+
+class NotQueued(Exception):
+    """The broker did not confirm a published message onto its queue."""
 
 
 @dataclass(frozen=True)
@@ -67,32 +92,79 @@ def confirming_broker(url: str) -> RabbitBroker:
     return RabbitBroker(url, default_channel=Channel(on_return_raises=True))
 
 
-async def publish_confirmed(
-    broker: RabbitBroker, message: Any, *, queue: str, message_id: str
-) -> None:
-    """Publish persistently and wait for the confirm; a nack or return raises."""
-    await broker.publish(
-        message,
-        queue=queue,
-        persist=True,
-        message_id=message_id,
-        timeout=PUBLISH_TIMEOUT_SECONDS,
-    )
+class Queue:
+    """One work queue: declares its topology, publishes to it, consumes from it."""
 
+    def __init__(self, broker: RabbitBroker, config: QueueConfig) -> None:
+        self._broker = broker
+        self._config = config
 
-async def declare_queue(broker: RabbitBroker, config: QueueConfig) -> None:
-    """Declare the DLX, the DLQ bound to it, then the work queue."""
-    dlx = await broker.declare_exchange(
-        RabbitExchange(config.dlx, type=ExchangeType.FANOUT, durable=True)
-    )
-    dlq = await broker.declare_queue(
-        RabbitQueue(config.dlq, queue_type=QueueType.QUORUM)
-    )
-    await dlq.bind(dlx)
-    await broker.declare_queue(
-        RabbitQueue(
-            config.name,
-            queue_type=QueueType.QUORUM,
-            arguments=queue_arguments(config),
+    async def declare(self) -> None:
+        """Declare the DLX, the DLQ bound to it, then the work queue."""
+        config = self._config
+        dlx = await self._broker.declare_exchange(
+            RabbitExchange(config.dlx, type=ExchangeType.FANOUT, durable=True)
         )
-    )
+        dlq = await self._broker.declare_queue(
+            RabbitQueue(config.dlq, queue_type=QueueType.QUORUM)
+        )
+        await dlq.bind(dlx)
+        await self._broker.declare_queue(
+            RabbitQueue(
+                config.name,
+                queue_type=QueueType.QUORUM,
+                arguments=queue_arguments(config),
+            )
+        )
+
+    async def publish(self, message: Any, message_id: str) -> None:
+        """Publish persistently and wait for the confirm, or raise ``NotQueued``."""
+        try:
+            await self._broker.publish(
+                message,
+                queue=self._config.name,
+                persist=True,
+                message_id=message_id,
+                timeout=PUBLISH_TIMEOUT_SECONDS,
+            )
+        except (
+            AMQPError,  # returned (unroutable) or nacked by the broker
+            ChannelInvalidStateError,  # connection lost, reconnect pending
+            TimeoutError,  # no confirm within PUBLISH_TIMEOUT_SECONDS
+        ) as exc:
+            raise NotQueued(f"message_id={message_id} not confirmed") from exc
+
+    def consume(self, handler: Handler, prefetch: int) -> None:
+        """Hand each message to ``handler``; call before the broker starts."""
+
+        @self._broker.subscriber(
+            RabbitQueue(self._config.name, queue_type=QueueType.QUORUM, declare=False),
+            channel=Channel(prefetch_count=prefetch),
+            ack_policy=AckPolicy.MANUAL,
+            # Keep the body as bytes: FastStream's JSON decoding runs before the
+            # handler, so a malformed body would fail there and never be rejected.
+            decoder=_raw_body,
+        )
+        async def on_message(message: RabbitMessage) -> None:
+            try:
+                action = await handler(
+                    message.body, message.headers, message.message_id
+                )
+            except Exception:
+                logger.exception(
+                    "message_id=%s requeued after an error", message.message_id
+                )
+                action = Action.RETRY
+            match action:
+                case Action.ACK:
+                    await message.ack()
+                case Action.RETRY:
+                    # reject, not nack: only reject counts toward the delivery
+                    # limit, so a message that keeps failing ends up in the DLQ.
+                    await message.reject(requeue=True)
+                case Action.DEAD_LETTER:
+                    await message.reject(requeue=False)
+
+
+async def _raw_body(message: RabbitMessage) -> bytes:
+    return message.body

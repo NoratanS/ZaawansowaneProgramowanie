@@ -1,7 +1,8 @@
 import httpx
 import pytest
 
-from analysis_service.courier import Action, classify
+from analysis_service.courier import classify
+from analysis_service.queues import Action
 
 pytestmark = pytest.mark.unit
 
