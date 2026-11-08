@@ -2,7 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from analysis_service.queues import QueueConfig
-from analysis_service.settings import AnalysisApiSettings
+from analysis_service.settings import (
+    AnalysisApiSettings,
+    CourierSettings,
+    WorkerSettings,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -87,4 +91,22 @@ def test_jwt_public_key_must_be_an_rsa_key(env, ec_keys):
     env.setenv("JWT_PUBLIC_KEY", ec_keys.public)
 
     with pytest.raises(ValidationError, match="RSA"):
+        AnalysisApiSettings()
+
+
+@pytest.mark.parametrize(
+    "settings_class", [AnalysisApiSettings, WorkerSettings, CourierSettings]
+)
+def test_log_level_defaults_to_info(env, jwt_keys, settings_class):
+    env.delenv("LOG_LEVEL", raising=False)
+    env.setenv("JWT_PRIVATE_KEY", jwt_keys.private)
+    env.setenv("RESULTS_SERVICE_URL", "http://results:8000")
+
+    assert settings_class().log_level == "INFO"
+
+
+def test_log_level_must_be_a_logging_level(env):
+    env.setenv("LOG_LEVEL", "LOUD")
+
+    with pytest.raises(ValidationError, match="log_level"):
         AnalysisApiSettings()

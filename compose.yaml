@@ -1,0 +1,120 @@
+# The whole People Counter. First-time setup:
+#   cp .env.example .env && uv run generate-keys && docker compose up
+# Mint a client token: docker compose exec courier issue-token --sub demo
+
+x-analysis: &analysis
+  build:
+    context: .
+    dockerfile: services/analysis/Dockerfile
+  image: people-counter/analysis
+  restart: unless-stopped
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+
+x-rabbitmq-url: &rabbitmq-url
+  amqp://${RABBITMQ_DEFAULT_USER:?}:${RABBITMQ_DEFAULT_PASS:?}@rabbitmq:5672/
+
+x-api-healthcheck: &api-healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  # Check every second while starting, so `up --wait` isn't held by 5 s ticks.
+  start_period: 30s
+  start_interval: 1s
+
+services:
+  analysis-api:
+    <<: *analysis
+    command: ["python", "-m", "analysis_service.api"]
+    environment:
+      RABBITMQ_URL: *rabbitmq-url
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?}
+      RESULTS_PUBLIC_URL: ${RESULTS_PUBLIC_URL:-http://localhost:${RESULTS_PORT:-8001}}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${ANALYSIS_API_PORT:-8000}:8000"
+    healthcheck: *api-healthcheck
+
+  worker:
+    <<: *analysis
+    command: ["python", "-m", "analysis_service.worker"]
+    environment:
+      RABBITMQ_URL: *rabbitmq-url
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    deploy:
+      replicas: 2
+
+  courier:
+    <<: *analysis
+    command: ["python", "-m", "analysis_service.courier"]
+    # No depends_on results: the Courier must start and retry while it is down.
+    environment:
+      RABBITMQ_URL: *rabbitmq-url
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:?}
+      RESULTS_SERVICE_URL: http://results:8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+  results:
+    build:
+      context: .
+      dockerfile: services/results/Dockerfile
+    image: people-counter/results
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/postgres
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?}
+      ANALYSIS_PUBLIC_URL: ${ANALYSIS_PUBLIC_URL:-http://localhost:${ANALYSIS_API_PORT:-8000}}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${RESULTS_PORT:-8001}:8000"
+    healthcheck: *api-healthcheck
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      # Postgres 18 keeps its data in a versioned directory under this path.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+      start_interval: 1s
+
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    # RabbitMQ names its data directory after the hostname; fixed, it survives
+    # container re-creation.
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?}
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # No fast start_interval here: a check before the server is up makes the
+      # CLI create .erlang.cookie as root, which RabbitMQ then can't read.
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
