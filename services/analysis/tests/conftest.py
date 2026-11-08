@@ -27,19 +27,27 @@ async def clean_broker(channel, rabbitmq_url):
 
 
 @pytest.fixture
-def client_for(rabbitmq_url, clean_broker):
-    """Open an Analysis Service client with its lifespan running."""
+def client_for(rabbitmq_url, clean_broker, jwt_keys, mint_token):
+    """Open an Analysis Service client with its lifespan running.
+
+    The client sends a valid client token unless ``authorized`` is false.
+    """
 
     @asynccontextmanager
-    async def open_client(results_public_url="http://results.example"):
+    async def open_client(results_public_url="http://results.example", authorized=True):
         settings = AnalysisApiSettings(
-            rabbitmq_url=rabbitmq_url, results_public_url=results_public_url
+            rabbitmq_url=rabbitmq_url,
+            results_public_url=results_public_url,
+            jwt_public_key=jwt_keys.public,
         )
+        headers = {}
+        if authorized:
+            headers["Authorization"] = f"Bearer {mint_token('analysis-service')}"
         app = create_app(settings)
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
-                transport=transport, base_url="http://analysis"
+                transport=transport, base_url="http://analysis", headers=headers
             ) as client:
                 yield client
 
@@ -78,3 +86,9 @@ def next_message(channel):
         return message
 
     return take
+
+
+@pytest.fixture
+async def anonymous_client(client_for):
+    async with client_for(authorized=False) as client:
+        yield client

@@ -3,7 +3,7 @@ import asyncio
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from results_service.settings import ResultsSettings
+from results_service.settings import DatabaseSettings
 
 
 def run_migrations(connection):
@@ -22,5 +22,5 @@ async def run_async_migrations(database_url):
 # Tests pass the URL in; `alembic upgrade head` reads DATABASE_URL.
 database_url = context.config.attributes.get("database_url")
 if database_url is None:
-    database_url = ResultsSettings().database_url
+    database_url = DatabaseSettings().database_url
 asyncio.run(run_async_migrations(database_url))

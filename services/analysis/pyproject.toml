@@ -10,7 +10,13 @@ dependencies = [
     "numpy>=2.5.4",
     "opencv-python-headless>=5",
     "pydantic-settings>=2.16.1",
+    "pyjwt[crypto]>=2.10",
+    "python-dotenv>=1.2",
 ]
+
+[project.scripts]
+issue-token = "analysis_service.cli:issue_token"
+generate-keys = "analysis_service.cli:generate_keys"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14"]

@@ -18,7 +18,8 @@ KNOBS = [
 
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, jwt_keys):
+    monkeypatch.setenv("JWT_PUBLIC_KEY", jwt_keys.public)
     for name in KNOBS:
         monkeypatch.delenv(name, raising=False)
     for name, value in REQUIRED.items():
@@ -26,7 +27,7 @@ def env(monkeypatch):
     return monkeypatch
 
 
-@pytest.mark.parametrize("missing", REQUIRED)
+@pytest.mark.parametrize("missing", [*REQUIRED, "JWT_PUBLIC_KEY"])
 def test_required_settings_must_be_set(env, missing):
     env.delenv(missing)
 
@@ -73,3 +74,17 @@ def test_retry_min_must_not_exceed_retry_max(env):
         AnalysisApiSettings(
             jobs_queue_retry_min_seconds=60, jobs_queue_retry_max_seconds=30
         )
+
+
+def test_jwt_public_key_must_be_a_pem_key(env):
+    env.setenv("JWT_PUBLIC_KEY", "not a key")
+
+    with pytest.raises(ValidationError, match="jwt_public_key"):
+        AnalysisApiSettings()
+
+
+def test_jwt_public_key_must_be_an_rsa_key(env, ec_keys):
+    env.setenv("JWT_PUBLIC_KEY", ec_keys.public)
+
+    with pytest.raises(ValidationError, match="RSA"):
+        AnalysisApiSettings()

@@ -15,23 +15,35 @@ from results_service.settings import ResultsSettings
 UNREACHABLE_DATABASE_URL = "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none"
 
 
-@asynccontextmanager
-async def http_client(settings):
-    """An HTTP client for the Results Service, with its lifespan running."""
-    app = create_app(settings)
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://results"
-        ) as client:
-            yield client
+@pytest.fixture(scope="session")
+def http_client(jwt_keys, mint_token):
+    """Open a Results Service client for a database URL, with its lifespan running.
+
+    The client sends a valid Courier token unless ``authorized`` is false.
+    """
+
+    @asynccontextmanager
+    async def open_client(database_url, authorized=True):
+        settings = ResultsSettings(
+            database_url=database_url, jwt_public_key=jwt_keys.public
+        )
+        headers = {}
+        if authorized:
+            headers["Authorization"] = f"Bearer {mint_token('results-service')}"
+        app = create_app(settings)
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://results", headers=headers
+            ) as client:
+                yield client
+
+    return open_client
 
 
 @pytest.fixture
-async def unreachable_db_client():
-    async with http_client(
-        ResultsSettings(database_url=UNREACHABLE_DATABASE_URL)
-    ) as client:
+async def unreachable_db_client(http_client):
+    async with http_client(UNREACHABLE_DATABASE_URL) as client:
         yield client
 
 
@@ -63,7 +75,7 @@ def _answer_with_fatal(sqlstate, message):
 
 
 @pytest.fixture(params=FATAL_ON_CONNECT.values(), ids=FATAL_ON_CONNECT)
-async def fatal_on_connect_db_client(request):
+async def fatal_on_connect_db_client(request, http_client):
     """A client whose database answers every connection with a FATAL error."""
     server = await asyncio.start_server(
         _answer_with_fatal(*request.param), "127.0.0.1", 0
@@ -71,7 +83,7 @@ async def fatal_on_connect_db_client(request):
     port = server.sockets[0].getsockname()[1]
     url = f"postgresql+asyncpg://nobody:nothing@127.0.0.1:{port}/none"
     async with server:
-        async with http_client(ResultsSettings(database_url=url)) as client:
+        async with http_client(url) as client:
             yield client
 
 
@@ -86,14 +98,26 @@ def database_url(postgres_url):
 
 
 @pytest.fixture
-async def client(database_url):
-    """A Results Service client over an empty ``results`` table."""
+async def empty_results(database_url):
+    """The session Postgres with an empty ``results`` table."""
     dsn = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
     connection = await asyncpg.connect(dsn)
     try:
         await connection.execute("TRUNCATE results")
     finally:
         await connection.close()
+    return database_url
 
-    async with http_client(ResultsSettings(database_url=database_url)) as client:
+
+@pytest.fixture
+async def client(empty_results, http_client):
+    """A Results Service client over an empty ``results`` table."""
+    async with http_client(empty_results) as client:
         yield client
+
+
+@pytest.fixture
+async def anonymous_client(empty_results, http_client):
+    """A client over an empty ``results`` table that sends no token."""
+    async with http_client(empty_results, authorized=False) as anonymous:
+        yield anonymous

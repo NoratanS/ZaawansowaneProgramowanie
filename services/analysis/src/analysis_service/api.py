@@ -5,9 +5,10 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from aiormq.exceptions import AMQPError, ChannelInvalidStateError
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, HttpUrl
 
+from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
 from analysis_service.queues import (
     confirming_broker,
@@ -52,6 +53,9 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
         "/analyses",
         status_code=status.HTTP_202_ACCEPTED,
         response_model=AnalysisAccepted,
+        dependencies=[
+            Depends(require_token(settings.jwt_public_key, ANALYSIS_AUDIENCE))
+        ],
     )
     async def accept_analysis_request(
         analysis_request: AnalysisRequest, request: Request, response: Response
