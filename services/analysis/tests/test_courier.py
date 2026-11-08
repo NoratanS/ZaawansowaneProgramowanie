@@ -27,7 +27,7 @@ RESULTS = re.compile(r"^/results/.+$")
 
 
 @pytest.fixture
-def courier_for(rabbitmq_url, clean_broker, httpserver):
+def courier_for(rabbitmq_url, clean_broker, httpserver, jwt_keys):
     """Run a Courier aimed at the stub Results Service until the block ends."""
 
     @asynccontextmanager
@@ -35,6 +35,7 @@ def courier_for(rabbitmq_url, clean_broker, httpserver):
         settings = CourierSettings(
             rabbitmq_url=rabbitmq_url,
             results_service_url=results_service_url or httpserver.url_for("/"),
+            jwt_private_key=jwt_keys.private,
             **FAST | overrides,
         )
         async with build_courier(settings):
@@ -143,6 +144,21 @@ def stall(request):
 async def settle():
     """Long enough for several redeliveries at the 50 ms retry delay."""
     await asyncio.sleep(0.6)
+
+
+async def test_the_put_carries_a_results_service_bearer_token(
+    courier_for, script, publish_result, requests_made, read_token
+):
+    script()
+
+    async with courier_for():
+        await publish_result()
+        [request] = await requests_made(1)
+
+    scheme, token = request.headers["Authorization"].split(" ")
+    assert scheme == "Bearer"
+    claims = read_token(token, "results-service")
+    assert claims["exp"] - claims["iat"] == 300
 
 
 @pytest.mark.parametrize("status", [200, 201])

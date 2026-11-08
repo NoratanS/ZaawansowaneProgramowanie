@@ -6,7 +6,12 @@ Each entrypoint has one settings class, built from the shared pieces below.
 from pathlib import Path
 from typing import Annotated, Self
 
-from pydantic import Field, HttpUrl, model_validator
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_private_key,
+    load_pem_public_key,
+)
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from analysis_service.queues import QueueConfig
@@ -65,7 +70,32 @@ class ResultsQueueSettings(BaseSettings):
         )
 
 
-class AnalysisApiSettings(BrokerSettings, JobsQueueSettings):
+class PublicKeySettings(BaseSettings):
+    jwt_public_key: str
+
+    @field_validator("jwt_public_key")
+    @classmethod
+    def _is_an_rsa_public_key(cls, value: str) -> str:
+        # RS256 needs RSA; any other key would fail every request, not startup.
+        if not isinstance(load_pem_public_key(value.encode()), RSAPublicKey):
+            raise ValueError("must be an RSA public key")
+        return value
+
+
+class PrivateKeySettings(BaseSettings):
+    # SecretStr keeps the key out of reprs and logs.
+    jwt_private_key: SecretStr
+
+    @field_validator("jwt_private_key")
+    @classmethod
+    def _is_an_rsa_private_key(cls, value: SecretStr) -> SecretStr:
+        key = load_pem_private_key(value.get_secret_value().encode(), password=None)
+        if not isinstance(key, RSAPrivateKey):
+            raise ValueError("must be an RSA private key")
+        return value
+
+
+class AnalysisApiSettings(BrokerSettings, JobsQueueSettings, PublicKeySettings):
     """Analysis Service HTTP API settings."""
 
     results_public_url: HttpUrl
@@ -85,7 +115,7 @@ class WorkerSettings(BrokerSettings, JobsQueueSettings, ResultsQueueSettings):
     model_path: Path = BAKED_MODEL_PATH
 
 
-class CourierSettings(BrokerSettings, ResultsQueueSettings):
+class CourierSettings(BrokerSettings, ResultsQueueSettings, PrivateKeySettings):
     """Courier settings."""
 
     results_service_url: HttpUrl
@@ -96,3 +126,7 @@ class CourierSettings(BrokerSettings, ResultsQueueSettings):
     def results_service_base_url(self) -> str:
         """``results_service_url`` without the trailing slash ``HttpUrl`` may add."""
         return str(self.results_service_url).rstrip("/")
+
+
+class IssueTokenSettings(PrivateKeySettings):
+    """``issue-token`` settings."""

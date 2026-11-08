@@ -15,6 +15,7 @@ from faststream.rabbit import QueueType, RabbitBroker, RabbitQueue
 from faststream.rabbit.annotations import RabbitMessage
 from faststream.rabbit.schemas import Channel
 
+from analysis_service.auth import CourierToken
 from analysis_service.queues import declare_queue
 from analysis_service.settings import CourierSettings
 
@@ -46,6 +47,7 @@ def build_courier(settings: CourierSettings) -> FastStream:
     results_queue = settings.results_queue
     base_url = settings.results_service_base_url
     timeout = settings.delivery_timeout_seconds
+    token = CourierToken(settings.jwt_private_key.get_secret_value())
     broker = RabbitBroker(settings.rabbitmq_url)
     # No per-operation timeout: deliver() enforces the total limit itself.
     http = httpx.AsyncClient(timeout=None)
@@ -67,7 +69,10 @@ def build_courier(settings: CourierSettings) -> FastStream:
                 response = await http.put(
                     f"{base_url}/results/{job_id}",
                     content=body,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token.get()}",
+                    },
                 )
         except (httpx.TransportError, TimeoutError) as exc:
             return exc

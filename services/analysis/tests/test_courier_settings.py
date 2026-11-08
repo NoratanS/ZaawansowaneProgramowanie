@@ -20,7 +20,8 @@ KNOBS = [
 
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, jwt_keys):
+    monkeypatch.setenv("JWT_PRIVATE_KEY", jwt_keys.private)
     for name in KNOBS:
         monkeypatch.delenv(name, raising=False)
     for name, value in REQUIRED.items():
@@ -28,7 +29,7 @@ def env(monkeypatch):
     return monkeypatch
 
 
-@pytest.mark.parametrize("missing", REQUIRED)
+@pytest.mark.parametrize("missing", [*REQUIRED, "JWT_PRIVATE_KEY"])
 def test_required_settings_must_be_set(env, missing):
     env.delenv(missing)
 
@@ -81,3 +82,17 @@ def test_results_service_url_must_be_http(env):
 def test_courier_knobs_must_be_positive(env, knob):
     with pytest.raises(ValidationError, match=knob):
         CourierSettings(**{knob: 0})
+
+
+def test_jwt_private_key_must_be_a_pem_key(env):
+    env.setenv("JWT_PRIVATE_KEY", "not a key")
+
+    with pytest.raises(ValidationError, match="jwt_private_key"):
+        CourierSettings()
+
+
+def test_jwt_private_key_must_be_an_rsa_key(env, ec_keys):
+    env.setenv("JWT_PRIVATE_KEY", ec_keys.private)
+
+    with pytest.raises(ValidationError, match="RSA"):
+        CourierSettings()
