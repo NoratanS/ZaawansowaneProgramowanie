@@ -22,7 +22,13 @@ from analysis_service.detector import Detect, Detection, load_detector
 from analysis_service.image_source import ImageSource
 from analysis_service.images import ImageFailure, decode_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
-from analysis_service.queues import Action, Queue, Received, confirming_broker
+from analysis_service.queues import (
+    Action,
+    Publisher,
+    Queue,
+    Received,
+    confirming_broker,
+)
 from analysis_service.settings import WorkerSettings
 from analysis_service.uploads import open_store
 
@@ -74,6 +80,21 @@ async def analyse(
     return result(status="succeeded", person_count=len(boxes), detections=boxes)
 
 
+async def handle_job(
+    body: bytes, load_image: LoadImage, detect: Detect, results: Publisher
+) -> Action:
+    """Analyse one job body, publish its Result, log one line and ACK.
+
+    Errors raise: the queue module retries the job, then dead-letters it.
+    """
+    started = time.perf_counter()
+    job = AnalysisJob.model_validate_json(body)
+    result = await analyse(job, load_image, detect)
+    await results.publish(result, message_id=str(job.job_id))
+    _log_outcome(result, started)
+    return Action.ACK
+
+
 class _ImageResources:
     """The Worker's HTTP client and Upload store, opened at startup."""
 
@@ -115,16 +136,10 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     async def close() -> None:
         await images.aclose()
 
-    # Errors raise: the queue module retries the job, then dead-letters it.
-    async def handle_job(received: Received) -> Action:
-        started = time.perf_counter()
-        job = AnalysisJob.model_validate_json(received.body)
-        result = await analyse(job, images.source.load, detect)
-        await results.publish(result, message_id=str(job.job_id))
-        _log_outcome(result, started)
-        return Action.ACK
+    async def on_job(received: Received) -> Action:
+        return await handle_job(received.body, images.source.load, detect, results)
 
-    jobs.consume(handle_job, prefetch=settings.worker_prefetch)
+    jobs.consume(on_job, prefetch=settings.worker_prefetch)
 
     return app
 

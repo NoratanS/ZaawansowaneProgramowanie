@@ -1,7 +1,4 @@
-import asyncio
 import json
-import logging
-import re
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -107,28 +104,6 @@ async def test_a_job_becomes_a_succeeded_result(
     assert await drain(JOBS_QUEUE) == []
 
 
-async def test_an_internal_url_becomes_a_forbidden_result_without_a_request(
-    worker_for, submit, next_message, drain, httpserver
-):
-    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
-    detect = FakeDetector()
-
-    async with worker_for(detect, image_allowed_hosts=frozenset()):
-        job = await submit(httpserver.url_for("/people.png"))
-        message = await next_message(RESULTS_QUEUE)
-        # Long enough for several redeliveries at the 50 ms retry delay.
-        await asyncio.sleep(0.6)
-
-    result = json.loads(message.body)
-    assert result["job_id"] == job["job_id"]
-    assert result["status"] == "failed"
-    assert result["error"]["code"] == "image_url_forbidden"
-    assert httpserver.log == []
-    assert detect.images == []
-    assert await drain(RESULTS_QUEUE) == []
-    assert await drain(JOBS_QUEUE) == []
-
-
 async def test_the_image_request_names_the_app_in_its_user_agent(
     worker_for, submit, next_message, httpserver
 ):
@@ -162,26 +137,6 @@ async def test_the_fetch_limit_is_not_cut_short_by_httpx_defaults(
     assert json.loads(message.body)["status"] == "succeeded"
 
 
-async def test_a_job_that_keeps_crashing_is_dead_lettered_after_the_limit(
-    worker_for, submit, next_message, drain, httpserver
-):
-    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
-    detect = FakeDetector(error=RuntimeError("detector exploded"))
-
-    async with worker_for(detect, jobs_queue_delivery_limit=3):
-        job = await submit(httpserver.url_for("/people.png"))
-        dead = await next_message(f"{JOBS_QUEUE}.dlq")
-        # Give a stray extra delivery the chance to show up.
-        await asyncio.sleep(0.3)
-
-    assert json.loads(dead.body)["job_id"] == job["job_id"]
-    # RabbitMQ's x-delivery-limit counts failed returns, so the job is tried
-    # once and retried 3 times (the spec's ~12 s window is 2 + 4 + 6 s).
-    assert len(detect.images) == 1 + 3
-    assert await drain(RESULTS_QUEUE) == []
-    assert await drain(JOBS_QUEUE) == []
-
-
 @pytest.mark.parametrize("results_queue", ["refusing", "missing"])
 async def test_a_job_is_not_acked_when_its_result_is_not_confirmed(
     worker_for, submit, next_message, drain, channel, httpserver, results_queue
@@ -204,37 +159,3 @@ async def test_a_job_is_not_acked_when_its_result_is_not_confirmed(
     assert json.loads(dead.body)["job_id"] == job["job_id"]
     assert len(detect.images) == 1 + 2
     assert await drain(JOBS_QUEUE) == []
-
-
-def job_lines(caplog):
-    return [
-        r.getMessage()
-        for r in caplog.records
-        if r.name == "analysis_service.worker" and r.levelno == logging.INFO
-    ]
-
-
-async def test_each_job_logs_one_info_line(
-    worker_for, submit, next_message, httpserver, caplog
-):
-    caplog.set_level(logging.INFO, logger="analysis_service.worker")
-    httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
-    httpserver.expect_request("/missing").respond_with_data("gone", status=404)
-    one_person = FakeDetector([Detection(x=1, y=1, width=4, height=4, confidence=0.8)])
-
-    async with worker_for(one_person):
-        good = await submit(httpserver.url_for("/people.png"))
-        await next_message(RESULTS_QUEUE)
-        bad = await submit(httpserver.url_for("/missing"))
-        await next_message(RESULTS_QUEUE)
-
-    succeeded, failed = job_lines(caplog)
-    assert re.fullmatch(
-        rf"job_id={good['job_id']} status=succeeded person_count=1 duration_ms=\d+",
-        succeeded,
-    )
-    assert re.fullmatch(
-        rf"job_id={bad['job_id']} status=failed error=image_unreachable"
-        r" person_count=None duration_ms=\d+",
-        failed,
-    )

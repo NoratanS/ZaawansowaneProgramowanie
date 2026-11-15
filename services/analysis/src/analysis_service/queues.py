@@ -9,7 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 from aiormq.exceptions import AMQPError, ChannelInvalidStateError
 from faststream import AckPolicy
@@ -53,6 +53,13 @@ Handler = Callable[[Received], Awaitable[Action]]
 
 class NotQueued(Exception):
     """The broker did not confirm a published message onto its queue."""
+
+
+class Publisher(Protocol):
+    """What the API needs from the jobs queue (``Queue`` in production)."""
+
+    async def publish(self, message: Any, message_id: str) -> None:
+        """Queue ``message``, or raise ``NotQueued``."""
 
 
 def check_retry_range(

@@ -31,19 +31,21 @@ class FakeDetector:
 
 
 class FakeJobs:
-    """Stands in for the jobs queue: records each published job.
+    """Stands in for a work queue: records each published message and its id.
 
     Set ``refusing`` to make every publish raise ``NotQueued``.
     """
 
     def __init__(self):
         self.published = []
+        self.message_ids = []
         self.refusing = False
 
     async def publish(self, message, message_id):
         if self.refusing:
             raise NotQueued(f"message_id={message_id} not confirmed")
         self.published.append(message)
+        self.message_ids.append(message_id)
 
 
 class MemoryUploadStore:
