@@ -62,13 +62,6 @@ class Publisher(Protocol):
         """Queue ``message``, or raise ``NotQueued``."""
 
 
-def check_retry_range(
-    name: str, retry_min_seconds: float, retry_max_seconds: float
-) -> None:
-    if retry_min_seconds > retry_max_seconds:
-        raise ValueError(f"{name}: retry_min_seconds must not exceed retry_max_seconds")
-
-
 @dataclass(frozen=True)
 class QueueConfig:
     name: str
@@ -77,7 +70,10 @@ class QueueConfig:
     delivery_limit: int
 
     def __post_init__(self) -> None:
-        check_retry_range(self.name, self.retry_min_seconds, self.retry_max_seconds)
+        if self.retry_min_seconds > self.retry_max_seconds:
+            raise ValueError(
+                f"{self.name}: retry_min_seconds must not exceed retry_max_seconds"
+            )
 
     @property
     def dlx(self) -> str:
@@ -86,6 +82,14 @@ class QueueConfig:
     @property
     def dlq(self) -> str:
         return f"{self.name}.dlq"
+
+
+JOBS = QueueConfig(
+    JOBS_QUEUE, retry_min_seconds=2, retry_max_seconds=30, delivery_limit=3
+)
+RESULTS = QueueConfig(
+    RESULTS_QUEUE, retry_min_seconds=2, retry_max_seconds=60, delivery_limit=20
+)
 
 
 def _ms(seconds: float) -> int:

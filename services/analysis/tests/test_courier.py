@@ -11,19 +11,17 @@ import pytest
 from werkzeug import Response
 
 from analysis_service.courier import build_courier
-from analysis_service.queues import RESULTS_QUEUE
+from analysis_service.queues import RESULTS_QUEUE, QueueConfig
 from analysis_service.settings import CourierSettings
 import result_cases
 
 pytestmark = pytest.mark.integration
 
 # Small delays, limit and timeout so retries and dead-lettering take milliseconds.
-FAST = {
-    "results_queue_retry_min_seconds": 0.05,
-    "results_queue_retry_max_seconds": 0.2,
-    "results_queue_delivery_limit": 3,
-    "delivery_timeout_seconds": 0.2,
-}
+FAST_RESULTS = QueueConfig(
+    RESULTS_QUEUE, retry_min_seconds=0.05, retry_max_seconds=0.2, delivery_limit=3
+)
+FAST = {"delivery_timeout_seconds": 0.2}
 RESULTS = re.compile(r"^/results/.+$")
 
 
@@ -39,7 +37,7 @@ def courier_for(rabbitmq_url, clean_broker, httpserver, jwt_keys):
             jwt_private_key=jwt_keys.private,
             **FAST | overrides,
         )
-        async with build_courier(settings):
+        async with build_courier(settings, results=FAST_RESULTS):
             yield
 
     return run_courier

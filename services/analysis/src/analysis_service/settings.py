@@ -1,10 +1,11 @@
 """Settings, read from real env vars only (no ``.env``).
 
-Each entrypoint has one settings class, built from the shared pieces below.
+Each entrypoint has one flat settings class; the field types below are shared.
+URLs default to the ones the compose stack uses.
 """
 
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
@@ -19,16 +20,8 @@ from pydantic import (
     SecretStr,
     TypeAdapter,
     field_validator,
-    model_validator,
 )
 from pydantic_settings import BaseSettings, NoDecode
-
-from analysis_service.queues import (
-    JOBS_QUEUE,
-    RESULTS_QUEUE,
-    QueueConfig,
-    check_retry_range,
-)
 
 # Where the Analysis image bakes YOLOX-S (see services/analysis/Dockerfile).
 BAKED_MODEL_PATH = Path("/opt/models/object_detection_yolox_2022nov.onnx")
@@ -51,111 +44,36 @@ def _is_an_rsa_public_key(value: str) -> str:
     return value
 
 
+def _is_an_rsa_private_key(value: SecretStr) -> SecretStr:
+    key = load_pem_private_key(value.get_secret_value().encode(), password=None)
+    if not isinstance(key, RSAPrivateKey):
+        raise ValueError("must be an RSA private key")
+    return value
+
+
 # An http(s) URL with no trailing slash, so f"{url}/path" has no double slash.
 BaseUrl = Annotated[str, AfterValidator(_without_trailing_slash)]
 PublicKeyPem = Annotated[str, AfterValidator(_is_an_rsa_public_key)]
+# SecretStr keeps the key out of reprs and logs.
+PrivateKeyPem = Annotated[SecretStr, AfterValidator(_is_an_rsa_private_key)]
+
+S3_ENDPOINT_URL = HttpUrl("http://s3:9000")
+ANALYSIS_PUBLIC_URL = "http://localhost:8000"
 
 
-class LoggingSettings(BaseSettings):
-    log_level: LogLevel = "INFO"
+class AnalysisApiSettings(BaseSettings):
+    """Analysis Service HTTP API settings."""
 
-
-class BrokerSettings(BaseSettings):
     rabbitmq_url: str
-
-
-class ImageLimitSettings(BaseSettings):
-    image_max_bytes: Limit = 10 * 1024 * 1024
-
-
-class UploadSettings(BaseSettings):
-    """The S3-compatible store for uploaded photos, and their public URLs."""
-
-    s3_endpoint_url: HttpUrl
+    jwt_public_key: PublicKeyPem
+    s3_endpoint_url: HttpUrl = S3_ENDPOINT_URL
     s3_access_key: str
     s3_secret_key: SecretStr
     # The Analysis Service as the browser sees it; uploads are served under it.
-    analysis_public_url: BaseUrl
-
-
-class JobsQueueSettings(BaseSettings):
-    jobs_queue_retry_min_seconds: Seconds = 2
-    jobs_queue_retry_max_seconds: Seconds = 30
-    jobs_queue_delivery_limit: Limit = 3
-
-    @model_validator(mode="after")
-    def _jobs_queue_retry_range(self) -> Self:
-        # Fail at startup, not on first use.
-        check_retry_range(
-            JOBS_QUEUE,
-            self.jobs_queue_retry_min_seconds,
-            self.jobs_queue_retry_max_seconds,
-        )
-        return self
-
-    @property
-    def jobs_queue(self) -> QueueConfig:
-        return QueueConfig(
-            name=JOBS_QUEUE,
-            retry_min_seconds=self.jobs_queue_retry_min_seconds,
-            retry_max_seconds=self.jobs_queue_retry_max_seconds,
-            delivery_limit=self.jobs_queue_delivery_limit,
-        )
-
-
-class ResultsQueueSettings(BaseSettings):
-    results_queue_retry_min_seconds: Seconds = 2
-    results_queue_retry_max_seconds: Seconds = 60
-    results_queue_delivery_limit: Limit = 20
-
-    @model_validator(mode="after")
-    def _results_queue_retry_range(self) -> Self:
-        # Fail at startup, not on first use.
-        check_retry_range(
-            RESULTS_QUEUE,
-            self.results_queue_retry_min_seconds,
-            self.results_queue_retry_max_seconds,
-        )
-        return self
-
-    @property
-    def results_queue(self) -> QueueConfig:
-        return QueueConfig(
-            name=RESULTS_QUEUE,
-            retry_min_seconds=self.results_queue_retry_min_seconds,
-            retry_max_seconds=self.results_queue_retry_max_seconds,
-            delivery_limit=self.results_queue_delivery_limit,
-        )
-
-
-class PublicKeySettings(BaseSettings):
-    jwt_public_key: PublicKeyPem
-
-
-class PrivateKeySettings(BaseSettings):
-    # SecretStr keeps the key out of reprs and logs.
-    jwt_private_key: SecretStr
-
-    @field_validator("jwt_private_key")
-    @classmethod
-    def _is_an_rsa_private_key(cls, value: SecretStr) -> SecretStr:
-        key = load_pem_private_key(value.get_secret_value().encode(), password=None)
-        if not isinstance(key, RSAPrivateKey):
-            raise ValueError("must be an RSA private key")
-        return value
-
-
-class AnalysisApiSettings(
-    BrokerSettings,
-    JobsQueueSettings,
-    PublicKeySettings,
-    UploadSettings,
-    ImageLimitSettings,
-    LoggingSettings,
-):
-    """Analysis Service HTTP API settings."""
-
-    results_public_url: BaseUrl
+    analysis_public_url: BaseUrl = ANALYSIS_PUBLIC_URL
+    results_public_url: BaseUrl = "http://localhost:8001"
+    image_max_bytes: Limit = 10 * 1024 * 1024
+    log_level: LogLevel = "INFO"
 
     @property
     def results_origin(self) -> str:
@@ -164,21 +82,22 @@ class AnalysisApiSettings(
         return f"{parts.scheme}://{parts.netloc}"
 
 
-class WorkerSettings(
-    BrokerSettings,
-    JobsQueueSettings,
-    ResultsQueueSettings,
-    UploadSettings,
-    ImageLimitSettings,
-    LoggingSettings,
-):
+class WorkerSettings(BaseSettings):
     """Worker settings."""
 
+    rabbitmq_url: str
+    s3_endpoint_url: HttpUrl = S3_ENDPOINT_URL
+    s3_access_key: str
+    s3_secret_key: SecretStr
+    # Upload URLs start with it; the Worker reads those from the store.
+    analysis_public_url: BaseUrl = ANALYSIS_PUBLIC_URL
+    image_max_bytes: Limit = 10 * 1024 * 1024
     image_fetch_timeout_seconds: Seconds = 10
     # Hosts exempt from the internal-address check, e.g. "images" in e2e.
     image_allowed_hosts: Annotated[frozenset[str], NoDecode] = frozenset()
     worker_prefetch: Limit = 1
     model_path: Path = BAKED_MODEL_PATH
+    log_level: LogLevel = "INFO"
 
     @field_validator("image_allowed_hosts", mode="before")
     @classmethod
@@ -189,15 +108,18 @@ class WorkerSettings(
         return value
 
 
-class CourierSettings(
-    BrokerSettings, ResultsQueueSettings, PrivateKeySettings, LoggingSettings
-):
+class CourierSettings(BaseSettings):
     """Courier settings."""
 
-    results_service_url: BaseUrl
+    rabbitmq_url: str
+    jwt_private_key: PrivateKeyPem
+    results_service_url: BaseUrl = "http://results:8000"
     delivery_timeout_seconds: Seconds = 10
     courier_prefetch: Limit = 10
+    log_level: LogLevel = "INFO"
 
 
-class IssueTokenSettings(PrivateKeySettings):
+class IssueTokenSettings(BaseSettings):
     """``issue-token`` settings."""
+
+    jwt_private_key: PrivateKeyPem

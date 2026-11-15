@@ -24,9 +24,12 @@ from analysis_service.image_source import ImageSource
 from analysis_service.images import ImageFailure, decode_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
 from analysis_service.queues import (
+    JOBS,
+    RESULTS,
     Action,
     Publisher,
     Queue,
+    QueueConfig,
     Received,
     confirming_broker,
 )
@@ -132,10 +135,16 @@ class _ImageResources:
         await self._resources.aclose()
 
 
-def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
+def build_worker(
+    settings: WorkerSettings,
+    detect: Detect,
+    *,
+    jobs: QueueConfig = JOBS,
+    results: QueueConfig = RESULTS,
+) -> FastStream:
     broker = confirming_broker(settings.rabbitmq_url)
-    jobs = Queue(broker, settings.jobs_queue)
-    results = Queue(broker, settings.results_queue)
+    jobs_queue = Queue(broker, jobs)
+    results_queue = Queue(broker, results)
     images = _ImageResources(settings)
     # In compose the hostname is the container id, one per replica.
     worker = socket.gethostname()
@@ -146,8 +155,8 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         await images.open()
         # Declare before the subscriber starts consuming from analysis-jobs.
         await broker.connect()
-        await jobs.declare()
-        await results.declare()
+        await jobs_queue.declare()
+        await results_queue.declare()
 
     @app.after_shutdown
     async def close() -> None:
@@ -155,10 +164,10 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
 
     async def on_job(received: Received) -> Action:
         return await handle_job(
-            received.body, images.source.load, detect, results, worker=worker
+            received.body, images.source.load, detect, results_queue, worker=worker
         )
 
-    jobs.consume(on_job, prefetch=settings.worker_prefetch)
+    jobs_queue.consume(on_job, prefetch=settings.worker_prefetch)
 
     return app
 

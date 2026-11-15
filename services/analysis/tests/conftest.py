@@ -27,12 +27,8 @@ def settings_env(monkeypatch, jwt_keys):
     """
     required = {
         "rabbitmq_url": "amqp://guest:guest@rabbitmq:5672/",
-        "results_public_url": "http://localhost:8001",
-        "results_service_url": "http://results:8000",
-        "s3_endpoint_url": "http://s3:9000",
         "s3_access_key": "access",
         "s3_secret_key": "secret",
-        "analysis_public_url": "http://localhost:8000",
         "jwt_public_key": jwt_keys.public,
         "jwt_private_key": jwt_keys.private,
     }

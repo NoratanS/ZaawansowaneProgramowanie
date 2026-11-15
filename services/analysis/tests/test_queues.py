@@ -1,18 +1,11 @@
 import pytest
 
-from analysis_service.queues import QueueConfig, queue_arguments
+from analysis_service.queues import JOBS, RESULTS, QueueConfig, queue_arguments
 
 pytestmark = pytest.mark.unit
 
-JOBS = QueueConfig(
-    name="analysis-jobs",
-    retry_min_seconds=2,
-    retry_max_seconds=30,
-    delivery_limit=3,
-)
 
-
-def test_jobs_queue_arguments_match_the_spec_defaults():
+def test_jobs_queue_arguments_match_the_spec():
     assert queue_arguments(JOBS) == {
         "x-delayed-retry-type": "failed",
         "x-delayed-retry-min": 2000,
@@ -22,6 +15,25 @@ def test_jobs_queue_arguments_match_the_spec_defaults():
         "x-dead-letter-strategy": "at-least-once",
         "x-overflow": "reject-publish",
     }
+
+
+def test_results_queue_follows_the_spec():
+    assert RESULTS == QueueConfig(
+        name="analysis-results",
+        retry_min_seconds=2,
+        retry_max_seconds=60,
+        delivery_limit=20,
+    )
+
+
+def test_retry_min_must_not_exceed_retry_max():
+    with pytest.raises(ValueError, match="must not exceed"):
+        QueueConfig(
+            name="analysis-jobs",
+            retry_min_seconds=60,
+            retry_max_seconds=30,
+            delivery_limit=3,
+        )
 
 
 def test_fractional_seconds_become_whole_milliseconds():
