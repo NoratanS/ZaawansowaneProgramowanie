@@ -1,6 +1,8 @@
 import asyncpg
 import pytest
 
+import result_cases
+
 pytestmark = pytest.mark.integration
 
 
@@ -11,20 +13,7 @@ async def test_health_answers_without_the_database(unreachable_db_client):
     assert response.json() == {"status": "ok"}
 
 
-SUCCEEDED = {
-    "job_id": "0b9d6f4e-6a43-4c39-9f53-2f1f0a6f8c11",
-    "image_url": "http://images/people.jpg",
-    "status": "succeeded",
-    "person_count": 2,
-    "detections": [
-        {"x": 10, "y": 20, "width": 30, "height": 60, "confidence": 0.91},
-        {"x": 50, "y": 25, "width": 28, "height": 58, "confidence": 0.47},
-    ],
-    "error": None,
-    "model": "yolox-s",
-    "requested_at": "2026-10-25T12:00:00Z",
-    "analyzed_at": "2026-10-25T12:00:03.250000Z",
-}
+SUCCEEDED = result_cases.load("succeeded-with-boxes").body
 
 
 async def test_put_stores_a_new_result(client):
@@ -77,17 +66,7 @@ async def test_get_of_a_non_uuid_is_422(client):
     assert response.status_code == 422
 
 
-FAILED_RESULT = {
-    "job_id": "5e2c8a7b-1d4f-4e6a-8b3c-9f0d1e2a3b4c",
-    "image_url": "https://example.com/cat.txt",
-    "status": "failed",
-    "person_count": None,
-    "detections": None,
-    "error": {"code": "not_an_image", "message": "The file is not an image."},
-    "model": "yolox-s",
-    "requested_at": "2026-10-25T12:00:00Z",
-    "analyzed_at": "2026-10-25T12:00:01Z",
-}
+FAILED_RESULT = result_cases.load("failed-not-an-image").body
 
 
 async def test_put_stores_a_failed_result(client):
@@ -99,68 +78,24 @@ async def test_put_stores_a_failed_result(client):
     assert response.json() == FAILED_RESULT
 
 
-def _with_box(**changes):
-    box = {**SUCCEEDED["detections"][0], **changes}
-    return {**SUCCEEDED, "person_count": 1, "detections": [box]}
+@pytest.mark.parametrize("case", result_cases.all_cases(), ids=lambda case: case.name)
+async def test_put_answers_each_case_as_the_model_does(client, case):
+    # Catches a SQL CHECK that is stricter or looser than the model.
+    url = f"/results/{case.body['job_id']}"
+
+    response = await client.put(url, json=case.body)
+
+    if case.results_service == "accept":
+        assert response.status_code == 201
+        assert (await client.get(url)).json() == response.json()
+    else:
+        assert response.status_code == 422
+        assert (await client.get(url)).status_code == 404
 
 
-SHAPE_VIOLATIONS = {
-    "path and body ids differ": {
-        **SUCCEEDED,
-        "job_id": "11111111-2222-4333-8444-555555555555",
-    },
-    "succeeded with an error": {
-        **SUCCEEDED,
-        "error": {"code": "not_an_image", "message": "nope"},
-    },
-    "succeeded without detections": {**SUCCEEDED, "detections": None},
-    "succeeded without a count": {**SUCCEEDED, "person_count": None},
-    "failed with a count": {
-        **FAILED_RESULT,
-        "job_id": SUCCEEDED["job_id"],
-        "person_count": 0,
-    },
-    "failed with detections": {
-        **FAILED_RESULT,
-        "job_id": SUCCEEDED["job_id"],
-        "detections": [],
-    },
-    "failed without an error": {
-        **FAILED_RESULT,
-        "job_id": SUCCEEDED["job_id"],
-        "error": None,
-    },
-    "count differs from detections": {**SUCCEEDED, "person_count": 3},
-    "negative count": {**SUCCEEDED, "person_count": -1, "detections": []},
-    "unknown error code": {
-        **FAILED_RESULT,
-        "job_id": SUCCEEDED["job_id"],
-        "error": {"code": "model_crashed", "message": "boom"},
-    },
-    "negative x": _with_box(x=-1),
-    "negative y": _with_box(y=-1),
-    "zero width": _with_box(width=0),
-    "zero height": _with_box(height=0),
-    "fractional box": _with_box(x=1.5),
-    "confidence above 1": _with_box(confidence=1.01),
-    "confidence below 0": _with_box(confidence=-0.01),
-    "boolean confidence": _with_box(confidence=True),
-    "string confidence": _with_box(confidence="0.9"),
-    "NUL in model": {**SUCCEEDED, "model": "yolox\u0000s"},
-    "NUL in error message": {
-        **FAILED_RESULT,
-        "job_id": SUCCEEDED["job_id"],
-        "error": {"code": "not_an_image", "message": "bad\u0000bytes"},
-    },
-    "unknown status": {**SUCCEEDED, "status": "pending"},
-    "naive requested_at": {**SUCCEEDED, "requested_at": "2026-10-25T12:00:00"},
-    "naive analyzed_at": {**SUCCEEDED, "analyzed_at": "2026-10-25T12:00:03"},
-}
-
-
-@pytest.mark.parametrize("body", SHAPE_VIOLATIONS.values(), ids=SHAPE_VIOLATIONS)
-async def test_put_rejects_a_misshapen_result(client, body):
+async def test_put_rejects_a_body_whose_id_differs_from_the_path(client):
     url = f"/results/{SUCCEEDED['job_id']}"
+    body = {**SUCCEEDED, "job_id": "11111111-2222-4333-8444-555555555555"}
 
     response = await client.put(url, json=body)
 
