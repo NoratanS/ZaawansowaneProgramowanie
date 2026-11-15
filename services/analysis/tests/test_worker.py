@@ -2,6 +2,7 @@ import json
 import socket
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -12,16 +13,17 @@ from werkzeug import Response
 from fakes import FakeDetector, png
 
 from analysis_service.detector import Detection
-from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
+from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE, QueueConfig
 from analysis_service.settings import WorkerSettings
 from analysis_service.worker import build_worker
 
 pytestmark = pytest.mark.integration
 
 # Small delays and limits so retries and dead-lettering happen in milliseconds.
+FAST_JOBS = QueueConfig(
+    JOBS_QUEUE, retry_min_seconds=0.05, retry_max_seconds=0.2, delivery_limit=3
+)
 FAST = {
-    "jobs_queue_retry_min_seconds": 0.05,
-    "jobs_queue_retry_max_seconds": 0.2,
     "image_fetch_timeout_seconds": 0.2,
     "image_max_bytes": 10_000,
     # The image origin fake listens on localhost, which the guard would refuse.
@@ -34,11 +36,11 @@ def worker_for(rabbitmq_url, clean_broker, upload_settings):
     """Run a Worker with a fake detector until the block ends."""
 
     @asynccontextmanager
-    async def run_worker(detect, **overrides):
+    async def run_worker(detect, jobs=FAST_JOBS, **overrides):
         settings = WorkerSettings(
             rabbitmq_url=rabbitmq_url, **upload_settings | FAST | overrides
         )
-        async with build_worker(settings, detect):
+        async with build_worker(settings, detect, jobs=jobs):
             yield
 
     return run_worker
@@ -146,7 +148,7 @@ async def test_a_job_is_not_acked_when_its_result_is_not_confirmed(
     httpserver.expect_request("/people.png").respond_with_data(png(8, 8))
     detect = FakeDetector()
 
-    async with worker_for(detect, jobs_queue_delivery_limit=2):
+    async with worker_for(detect, jobs=replace(FAST_JOBS, delivery_limit=2)):
         await channel.queue_delete(RESULTS_QUEUE)
         if results_queue == "refusing":
             # A queue that refuses every message, so the broker nacks.

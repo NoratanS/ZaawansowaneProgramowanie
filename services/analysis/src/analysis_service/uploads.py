@@ -15,7 +15,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from analysis_service.images import ImageFailure
-from analysis_service.settings import UploadSettings
+from analysis_service.settings import AnalysisApiSettings, WorkerSettings
 
 UPLOADS_BUCKET = "uploads"
 CHUNK_BYTES = 64 * 1024
@@ -94,7 +94,9 @@ def upload_id_in(url: str, analysis_public_url: str) -> UUID | None:
 
 
 @asynccontextmanager
-async def open_store(settings: UploadSettings) -> AsyncIterator[UploadStore]:
+async def open_store(
+    settings: AnalysisApiSettings | WorkerSettings,
+) -> AsyncIterator[UploadStore]:
     session = get_session()
     async with session.create_client(
         "s3",

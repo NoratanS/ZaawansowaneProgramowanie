@@ -13,7 +13,14 @@ import httpx
 from faststream import FastStream
 
 from analysis_service.auth import CourierToken
-from analysis_service.queues import Action, Queue, Received, confirming_broker
+from analysis_service.queues import (
+    RESULTS,
+    Action,
+    Queue,
+    QueueConfig,
+    Received,
+    confirming_broker,
+)
 from analysis_service.settings import CourierSettings
 
 logger = logging.getLogger(__name__)
@@ -73,12 +80,14 @@ async def deliver(received: Received, put: Put, *, timeout: float) -> Action:
     return action
 
 
-def build_courier(settings: CourierSettings) -> FastStream:
+def build_courier(
+    settings: CourierSettings, *, results: QueueConfig = RESULTS
+) -> FastStream:
     base_url = settings.results_service_url
     timeout = settings.delivery_timeout_seconds
     token = CourierToken(settings.jwt_private_key.get_secret_value())
     broker = confirming_broker(settings.rabbitmq_url)
-    results = Queue(broker, settings.results_queue)
+    results_queue = Queue(broker, results)
     # No per-operation timeout: deliver() enforces the total limit itself.
     http = httpx.AsyncClient(timeout=None)
     app = FastStream(broker)
@@ -87,7 +96,7 @@ def build_courier(settings: CourierSettings) -> FastStream:
     async def declare_results_queue() -> None:
         # Declare before the subscriber starts consuming from analysis-results.
         await broker.connect()
-        await results.declare()
+        await results_queue.declare()
 
     @app.after_shutdown
     async def close_http() -> None:
@@ -111,7 +120,7 @@ def build_courier(settings: CourierSettings) -> FastStream:
     async def deliver_result(received: Received) -> Action:
         return await deliver(received, put, timeout=timeout)
 
-    results.consume(deliver_result, prefetch=settings.courier_prefetch)
+    results_queue.consume(deliver_result, prefetch=settings.courier_prefetch)
     return app
 
 

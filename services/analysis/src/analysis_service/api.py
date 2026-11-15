@@ -19,7 +19,14 @@ from starlette.datastructures import UploadFile
 
 from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
-from analysis_service.queues import NotQueued, Publisher, Queue, confirming_broker
+from analysis_service.queues import (
+    JOBS,
+    NotQueued,
+    Publisher,
+    Queue,
+    QueueConfig,
+    confirming_broker,
+)
 from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import StoredUpload, UploadStore, open_store, url_for
 
@@ -56,13 +63,17 @@ def create_app(
     settings: AnalysisApiSettings,
     jobs: Publisher | None = None,
     store: UploadStorage | None = None,
+    *,
+    jobs_queue: QueueConfig = JOBS,
 ) -> FastAPI:
     """The API; a ``None`` adapter is replaced by the real RabbitMQ or S3 one."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with AsyncExitStack() as stack:
-            app.state.jobs = await _open_jobs(settings, stack) if jobs is None else jobs
+            app.state.jobs = (
+                await _open_jobs(settings, jobs_queue, stack) if jobs is None else jobs
+            )
             app.state.store = (
                 await _open_store(settings, stack) if store is None else store
             )
@@ -187,12 +198,14 @@ def create_app(
     return app
 
 
-async def _open_jobs(settings: AnalysisApiSettings, stack: AsyncExitStack) -> Queue:
+async def _open_jobs(
+    settings: AnalysisApiSettings, config: QueueConfig, stack: AsyncExitStack
+) -> Queue:
     # A missing queue gives 503 instead of a 202 for a lost job.
     broker = confirming_broker(settings.rabbitmq_url)
     await broker.start()
     stack.push_async_callback(broker.stop)
-    jobs = Queue(broker, settings.jobs_queue)
+    jobs = Queue(broker, config)
     await jobs.declare()
     return jobs
 
