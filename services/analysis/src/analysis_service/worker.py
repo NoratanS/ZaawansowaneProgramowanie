@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +22,7 @@ from analysis_service.detector import Detect, Detection, load_detector
 from analysis_service.image_source import ImageSource
 from analysis_service.images import ImageFailure, decode_image
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
-from analysis_service.queues import Action, Queue, confirming_broker
+from analysis_service.queues import Action, Queue, Received, confirming_broker
 from analysis_service.settings import WorkerSettings
 from analysis_service.uploads import open_store
 
@@ -116,11 +116,9 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         await images.aclose()
 
     # Errors raise: the queue module retries the job, then dead-letters it.
-    async def handle_job(
-        body: bytes, headers: Mapping[str, Any], message_id: str | None
-    ) -> Action:
+    async def handle_job(received: Received) -> Action:
         started = time.perf_counter()
-        job = AnalysisJob.model_validate_json(body)
+        job = AnalysisJob.model_validate_json(received.body)
         result = await analyse(job, images.source.load, detect)
         await results.publish(result, message_id=str(job.job_id))
         _log_outcome(result, started)

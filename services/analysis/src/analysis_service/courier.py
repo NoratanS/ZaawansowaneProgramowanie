@@ -6,15 +6,14 @@ Run with ``python -m analysis_service.courier``.
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import httpx
 from faststream import FastStream
 
 from analysis_service.auth import CourierToken
-from analysis_service.queues import Action, Queue, confirming_broker
+from analysis_service.queues import Action, Queue, Received, confirming_broker
 from analysis_service.settings import CourierSettings
 
 logger = logging.getLogger(__name__)
@@ -39,24 +38,18 @@ def classify(outcome: Outcome) -> Action:
 Put = Callable[[UUID, bytes], Awaitable[Outcome]]
 
 
-async def deliver(
-    body: bytes,
-    put: Put,
-    *,
-    delivery_count: int,
-    timeout: float,
-    message_id: str | None,
-) -> Action:
-    """One Delivery attempt: PUT the Result in ``body``, say what to do next.
+async def deliver(received: Received, put: Put, *, timeout: float) -> Action:
+    """One Delivery attempt: PUT the Result in ``received``, say what to do next.
 
-    ``delivery_count`` and ``message_id`` only feed the log lines; ``timeout``
-    is the PUT's total limit, named in the cause text when it runs out.
+    Its ``delivery_count`` and ``message_id`` only feed the log lines;
+    ``timeout`` is the PUT's total limit, named in the cause text when it runs out.
     """
+    body = received.body
     job_id = _job_id(body)
     if job_id is None:
         logger.error(
             "message_id=%s dead-lettered cause=no valid job_id in the body",
-            message_id,
+            received.message_id,
         )
         return Action.DEAD_LETTER
     outcome = await put(job_id, body)
@@ -69,7 +62,7 @@ async def deliver(
                 "job_id=%s retrying cause=%s x-delivery-count=%s",
                 job_id,
                 _cause(outcome, timeout),
-                delivery_count,
+                received.delivery_count,
             )
         case Action.DEAD_LETTER:
             logger.error(
@@ -115,16 +108,8 @@ def build_courier(settings: CourierSettings) -> FastStream:
             return exc
         return response.status_code
 
-    async def deliver_result(
-        body: bytes, headers: Mapping[str, Any], message_id: str | None
-    ) -> Action:
-        return await deliver(
-            body,
-            put,
-            delivery_count=headers.get("x-delivery-count", 0),
-            timeout=timeout,
-            message_id=message_id,
-        )
+    async def deliver_result(received: Received) -> Action:
+        return await deliver(received, put, timeout=timeout)
 
     results.consume(deliver_result, prefetch=settings.courier_prefetch)
     return app

@@ -28,8 +28,8 @@ class ScriptedHandler:
         self.actions = list(actions)
         self.calls = []
 
-    async def __call__(self, body, headers, message_id):
-        self.calls.append((body, headers, message_id))
+    async def __call__(self, received):
+        self.calls.append(received)
         action = self.actions.pop(0) if self.actions else Action.ACK
         if isinstance(action, Exception):
             raise action
@@ -80,10 +80,10 @@ async def test_an_acked_message_leaves_the_queue(queue_for, drain):
         # Give a stray redelivery the chance to show up.
         await asyncio.sleep(0.3)
 
-    [(body, headers, message_id)] = handler.calls
-    assert body == BODY
-    assert isinstance(headers, dict)
-    assert message_id == "1"
+    [received] = handler.calls
+    assert received.body == BODY
+    assert received.message_id == "1"
+    assert received.delivery_count == 0
     assert await drain(JOBS_QUEUE) == []
     assert await drain(f"{JOBS_QUEUE}.dlq") == []
 
@@ -96,9 +96,10 @@ async def test_a_retried_message_is_delivered_again(queue_for, drain):
         await wait_for_calls(handler, 2)
         await asyncio.sleep(0.3)
 
-    assert [body for body, *_ in handler.calls] == [BODY, BODY]
-    # The Courier logs this header, so a redelivery must carry it.
-    assert handler.calls[1][1]["x-delivery-count"] == 1
+    assert [received.body for received in handler.calls] == [BODY, BODY]
+    assert [received.message_id for received in handler.calls] == ["1", "1"]
+    # The Courier logs this count, so a redelivery must carry it.
+    assert [received.delivery_count for received in handler.calls] == [0, 1]
     assert await drain(JOBS_QUEUE) == []
     assert await drain(f"{JOBS_QUEUE}.dlq") == []
 
