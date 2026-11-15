@@ -1,42 +1,35 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from analysis_service.queues import QueueConfig
 from analysis_service.settings import (
     AnalysisApiSettings,
+    BaseUrl,
     CourierSettings,
+    PublicKeyPem,
     WorkerSettings,
 )
 
 pytestmark = pytest.mark.unit
 
-REQUIRED = {
-    "RABBITMQ_URL": "amqp://guest:guest@rabbitmq:5672/",
-    "RESULTS_PUBLIC_URL": "http://localhost:8001",
-    "S3_ENDPOINT_URL": "http://s3:9000",
-    "S3_ACCESS_KEY": "access",
-    "S3_SECRET_KEY": "secret",
-    "ANALYSIS_PUBLIC_URL": "http://localhost:8000",
-}
-KNOBS = [
-    "JOBS_QUEUE_RETRY_MIN_SECONDS",
-    "JOBS_QUEUE_RETRY_MAX_SECONDS",
-    "JOBS_QUEUE_DELIVERY_LIMIT",
-    "IMAGE_MAX_BYTES",
-]
-
 
 @pytest.fixture
-def env(monkeypatch, jwt_keys):
-    monkeypatch.setenv("JWT_PUBLIC_KEY", jwt_keys.public)
-    for name in KNOBS:
-        monkeypatch.delenv(name, raising=False)
-    for name, value in REQUIRED.items():
-        monkeypatch.setenv(name, value)
-    return monkeypatch
+def env(settings_env):
+    return settings_env(AnalysisApiSettings)
 
 
-@pytest.mark.parametrize("missing", [*REQUIRED, "JWT_PUBLIC_KEY"])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "RABBITMQ_URL",
+        "RESULTS_PUBLIC_URL",
+        "S3_ENDPOINT_URL",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+        "ANALYSIS_PUBLIC_URL",
+        "JWT_PUBLIC_KEY",
+    ],
+)
 def test_required_settings_must_be_set(env, missing):
     env.delenv(missing)
 
@@ -48,23 +41,12 @@ def test_required_settings_come_from_the_environment(env):
     settings = AnalysisApiSettings()
 
     assert settings.rabbitmq_url == "amqp://guest:guest@rabbitmq:5672/"
-    assert settings.results_base_url == "http://localhost:8001"
+    assert settings.results_public_url == "http://localhost:8001"
     assert str(settings.s3_endpoint_url) == "http://s3:9000/"
     assert settings.s3_access_key == "access"
     assert settings.s3_secret_key.get_secret_value() == "secret"
     # The upload size limit is shared with the Worker.
     assert settings.image_max_bytes == 10 * 1024 * 1024
-
-
-@pytest.mark.parametrize(
-    "analysis_public_url",
-    ["https://pc.example/analysis", "https://pc.example/analysis/"],
-)
-def test_uploads_are_served_under_the_analysis_public_url(env, analysis_public_url):
-    env.setenv("ANALYSIS_PUBLIC_URL", analysis_public_url)
-
-    expected = "https://pc.example/analysis/uploads"
-    assert AnalysisApiSettings().uploads_base_url == expected
 
 
 def test_jobs_queue_defaults_follow_the_spec(env):
@@ -80,13 +62,6 @@ def test_jobs_queue_knobs_come_from_the_environment(env):
     env.setenv("JOBS_QUEUE_DELIVERY_LIMIT", "7")
 
     assert AnalysisApiSettings().jobs_queue.delivery_limit == 7
-
-
-def test_results_public_url_must_be_http(env):
-    env.setenv("RESULTS_PUBLIC_URL", "ftp://results")
-
-    with pytest.raises(ValidationError, match="results_public_url"):
-        AnalysisApiSettings()
 
 
 def test_retry_delays_must_be_positive(env):
@@ -118,10 +93,8 @@ def test_jwt_public_key_must_be_an_rsa_key(env, ec_keys):
 @pytest.mark.parametrize(
     "settings_class", [AnalysisApiSettings, WorkerSettings, CourierSettings]
 )
-def test_log_level_defaults_to_info(env, jwt_keys, settings_class):
-    env.delenv("LOG_LEVEL", raising=False)
-    env.setenv("JWT_PRIVATE_KEY", jwt_keys.private)
-    env.setenv("RESULTS_SERVICE_URL", "http://results:8000")
+def test_log_level_defaults_to_info(settings_env, settings_class):
+    settings_env(settings_class)
 
     assert settings_class().log_level == "INFO"
 
@@ -131,3 +104,36 @@ def test_log_level_must_be_a_logging_level(env):
 
     with pytest.raises(ValidationError, match="log_level"):
         AnalysisApiSettings()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://pc.example/analysis/", "https://pc.example/analysis"),
+        ("https://pc.example/analysis", "https://pc.example/analysis"),
+        ("http://localhost:8000", "http://localhost:8000"),
+    ],
+)
+def test_a_base_url_has_no_trailing_slash(value, expected):
+    assert TypeAdapter(BaseUrl).validate_python(value) == expected
+
+
+def test_a_base_url_must_be_http():
+    with pytest.raises(ValidationError, match="URL scheme should be 'http' or 'https'"):
+        TypeAdapter(BaseUrl).validate_python("ftp://results")
+
+
+def test_a_public_key_pem_is_an_rsa_public_key(jwt_keys):
+    assert TypeAdapter(PublicKeyPem).validate_python(jwt_keys.public) == jwt_keys.public
+
+
+@pytest.mark.parametrize("key", ["private", "garbage", "ec"])
+def test_a_public_key_pem_rejects_anything_else(jwt_keys, ec_keys, key):
+    value = {
+        "private": jwt_keys.private,
+        "garbage": "not a key",
+        "ec": ec_keys.public,
+    }[key]
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PublicKeyPem).validate_python(value)

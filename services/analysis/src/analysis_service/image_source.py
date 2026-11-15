@@ -24,7 +24,7 @@ class ImageSource:
     async def load(self, image_url: str) -> bytearray:
         settings = self._settings
         # Uploads are read by key, so the SSRF guard has nothing to check.
-        upload_id = upload_id_in(image_url, settings.uploads_base_url)
+        upload_id = upload_id_in(image_url, settings.analysis_public_url)
         if upload_id is not None:
             return await self._store.read_image(upload_id, settings.image_max_bytes)
         return await fetch_image(

@@ -15,6 +15,28 @@ from results_service.settings import ResultsSettings
 UNREACHABLE_DATABASE_URL = "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none"
 
 
+@pytest.fixture
+def settings_env(monkeypatch, jwt_keys):
+    """Isolate a settings class from the real env; return ``monkeypatch``.
+
+    Every env var the class reads is cleared, then its required ones are set,
+    so a developer's own env can't leak into the defaults.
+    """
+    required = {
+        "database_url": "postgresql+asyncpg://u:p@db:5432/results",
+        "jwt_public_key": jwt_keys.public,
+    }
+
+    def isolate(settings_class):
+        for name, field in settings_class.model_fields.items():
+            monkeypatch.delenv(name.upper(), raising=False)
+            if field.is_required():
+                monkeypatch.setenv(name.upper(), required[name])
+        return monkeypatch
+
+    return isolate
+
+
 @pytest.fixture(scope="session")
 def http_client(jwt_keys, mint_token):
     """Open a Results Service client for a database URL, with its lifespan running.

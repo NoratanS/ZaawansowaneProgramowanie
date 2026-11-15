@@ -46,6 +46,13 @@ class NotQueued(Exception):
     """The broker did not confirm a published message onto its queue."""
 
 
+def check_retry_range(
+    name: str, retry_min_seconds: float, retry_max_seconds: float
+) -> None:
+    if retry_min_seconds > retry_max_seconds:
+        raise ValueError(f"{name}: retry_min_seconds must not exceed retry_max_seconds")
+
+
 @dataclass(frozen=True)
 class QueueConfig:
     name: str
@@ -54,10 +61,7 @@ class QueueConfig:
     delivery_limit: int
 
     def __post_init__(self) -> None:
-        if self.retry_min_seconds > self.retry_max_seconds:
-            raise ValueError(
-                f"{self.name}: retry_min_seconds must not exceed retry_max_seconds"
-            )
+        check_retry_range(self.name, self.retry_min_seconds, self.retry_max_seconds)
 
     @property
     def dlx(self) -> str:

@@ -19,6 +19,35 @@ ANALYSIS_PUBLIC_URL = "http://analysis.example"
 
 
 @pytest.fixture
+def settings_env(monkeypatch, jwt_keys):
+    """Isolate a settings class from the real env; return ``monkeypatch``.
+
+    Every env var the class reads is cleared, then its required ones are set,
+    so a developer's own env can't leak into the defaults.
+    """
+    required = {
+        "rabbitmq_url": "amqp://guest:guest@rabbitmq:5672/",
+        "results_public_url": "http://localhost:8001",
+        "results_service_url": "http://results:8000",
+        "s3_endpoint_url": "http://s3:9000",
+        "s3_access_key": "access",
+        "s3_secret_key": "secret",
+        "analysis_public_url": "http://localhost:8000",
+        "jwt_public_key": jwt_keys.public,
+        "jwt_private_key": jwt_keys.private,
+    }
+
+    def isolate(settings_class):
+        for name, field in settings_class.model_fields.items():
+            monkeypatch.delenv(name.upper(), raising=False)
+            if field.is_required():
+                monkeypatch.setenv(name.upper(), required[name])
+        return monkeypatch
+
+    return isolate
+
+
+@pytest.fixture
 async def channel(rabbitmq_url):
     """A raw AMQP channel for inspecting and tampering with the broker."""
     async with await aio_pika.connect(rabbitmq_url) as connection:

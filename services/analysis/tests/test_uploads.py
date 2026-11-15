@@ -33,8 +33,7 @@ async def test_each_uploaded_file_becomes_a_queued_job(client, drain, stored_key
     assert [job["job_id"] for job in jobs] == [item["job_id"] for item in accepted]
     upload_ids = sorted(await stored_keys())
     assert sorted(job["image_url"] for job in jobs) == sorted(
-        url_for(UUID(upload_id), "http://analysis.example/uploads")
-        for upload_id in upload_ids
+        url_for(UUID(upload_id), "http://analysis.example") for upload_id in upload_ids
     )
 
 

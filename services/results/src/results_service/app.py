@@ -47,7 +47,7 @@ def create_app(settings: ResultsSettings) -> FastAPI:
 
     @app.get("/ui-config")
     async def ui_config():
-        return {"analysis_url": settings.analysis_base_url}
+        return {"analysis_url": settings.analysis_public_url}
 
     @app.put(
         "/results/{job_id}",
