@@ -6,7 +6,7 @@ Run with ``python -m analysis_service.courier``.
 import asyncio
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +33,51 @@ def classify(outcome: Outcome) -> Action:
     if outcome in (408, 429) or 500 <= outcome <= 599:
         return Action.RETRY
     return Action.DEAD_LETTER
+
+
+# Sends one Result to the Results Service and reports how the PUT ended.
+Put = Callable[[UUID, bytes], Awaitable[Outcome]]
+
+
+async def deliver(
+    body: bytes,
+    put: Put,
+    *,
+    delivery_count: int,
+    timeout: float,
+    message_id: str | None,
+) -> Action:
+    """One Delivery attempt: PUT the Result in ``body``, say what to do next.
+
+    ``delivery_count`` and ``message_id`` only feed the log lines; ``timeout``
+    is the PUT's total limit, named in the cause text when it runs out.
+    """
+    job_id = _job_id(body)
+    if job_id is None:
+        logger.error(
+            "message_id=%s dead-lettered cause=no valid job_id in the body",
+            message_id,
+        )
+        return Action.DEAD_LETTER
+    outcome = await put(job_id, body)
+    action = classify(outcome)
+    match action:
+        case Action.ACK:
+            logger.info("job_id=%s delivered status=%d", job_id, outcome)
+        case Action.RETRY:
+            logger.warning(
+                "job_id=%s retrying cause=%s x-delivery-count=%s",
+                job_id,
+                _cause(outcome, timeout),
+                delivery_count,
+            )
+        case Action.DEAD_LETTER:
+            logger.error(
+                "job_id=%s dead-lettered cause=%s",
+                job_id,
+                _cause(outcome, timeout),
+            )
+    return action
 
 
 def build_courier(settings: CourierSettings) -> FastStream:
@@ -70,37 +115,18 @@ def build_courier(settings: CourierSettings) -> FastStream:
             return exc
         return response.status_code
 
-    async def deliver(
+    async def deliver_result(
         body: bytes, headers: Mapping[str, Any], message_id: str | None
     ) -> Action:
-        job_id = _job_id(body)
-        if job_id is None:
-            logger.error(
-                "message_id=%s dead-lettered cause=no valid job_id in the body",
-                message_id,
-            )
-            return Action.DEAD_LETTER
-        outcome = await put(job_id, body)
-        action = classify(outcome)
-        match action:
-            case Action.ACK:
-                logger.info("job_id=%s delivered status=%d", job_id, outcome)
-            case Action.RETRY:
-                logger.warning(
-                    "job_id=%s retrying cause=%s x-delivery-count=%s",
-                    job_id,
-                    _cause(outcome, timeout),
-                    headers.get("x-delivery-count", 0),
-                )
-            case Action.DEAD_LETTER:
-                logger.error(
-                    "job_id=%s dead-lettered cause=%s",
-                    job_id,
-                    _cause(outcome, timeout),
-                )
-        return action
+        return await deliver(
+            body,
+            put,
+            delivery_count=headers.get("x-delivery-count", 0),
+            timeout=timeout,
+            message_id=message_id,
+        )
 
-    results.consume(deliver, prefetch=settings.courier_prefetch)
+    results.consume(deliver_result, prefetch=settings.courier_prefetch)
     return app
 
 
