@@ -4,31 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>People Counter</title>
+<link rel="stylesheet" href="ui.css">
 <style>
-  :root { color-scheme: light dark; --muted: #777; --ok: #1a7f37; --bad: #cf222e; --box: #ff2d55; }
-  body { font: 15px/1.4 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 1.4rem; }
-  h2 { font-size: 1.1rem; margin-top: 2rem; }
-  form, .field { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-  label { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; }
-  input { flex: 1; min-width: 0; padding: 6px; font: inherit; }
-  button { padding: 6px 14px; font: inherit; }
   #job { min-height: 1.4em; }
-  .muted { color: var(--muted); }
-  .succeeded { color: var(--ok); }
-  .failed, .error { color: var(--bad); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #8884; }
-  td.url { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  tr.clickable { cursor: pointer; }
-  tr.clickable:hover { background: #8882; }
   canvas { max-width: 100%; height: auto; display: block; margin-top: 8px; }
-  #drop { border: 2px dashed #8888; border-radius: 6px; padding: 16px; text-align: center; margin-bottom: 8px; }
-  #drop.over { border-color: var(--ok); background: #8882; }
 </style>
 </head>
 <body>
 <h1>People Counter</h1>
+<nav><strong>Single image</strong> · <a href="batch">Batch</a></nav>
 
 <div class="field">
   <label>Client token
@@ -39,60 +23,35 @@
 
 <form id="submit-form">
   <label>Image URL
-    <input id="image-url" type="url" required placeholder="https://example.com/people.jpg">
-    <button type="submit">Count people</button>
+    <input id="image-url" type="url" placeholder="https://example.com/people.jpg">
   </label>
-</form>
-<form id="upload-form">
-  <label>Photos
-    <input id="photos" type="file" accept="image/*" multiple>
-    <button type="submit">Upload</button>
+  <label>or a local file
+    <input id="photo" type="file" accept="image/*">
   </label>
+  <button type="submit">Count people</button>
 </form>
-<div id="drop" class="muted">...or drop up to 100 photos here</div>
-<div id="job" class="muted"></div>
 
-<h2>Viewer</h2>
-<div id="viewer" class="muted">Click a succeeded Result to see its boxes.</div>
+<div id="job" class="muted"></div>
 <canvas id="canvas" hidden></canvas>
 
-<h2>Recent Results</h2>
-<table>
-  <thead><tr><th>Status</th><th>Count</th><th>Image</th><th>Error</th></tr></thead>
-  <tbody id="results"></tbody>
-</table>
-
+<script src="ui.js"></script>
 <script>
 "use strict";
 
-const TOKEN_KEY = "people-counter-token";
-const FAST_POLL_MS = 1000;
-const SLOW_POLL_MS = 5000;
-const FAST_FOR_MS = 30 * 1000;
-const GIVE_UP_AFTER_MS = 10 * 60 * 1000;
-const TABLE_REFRESH_MS = 5000;
-
 const $ = (id) => document.getElementById(id);
-const tokenInput = $("token");
+const token = bindToken($("token"));
+const urlInput = $("image-url");
+const fileInput = $("photo");
 const jobLine = $("job");
-const viewer = $("viewer");
 const canvas = $("canvas");
 
-// localStorage can throw (private mode, blocked storage); the page works without it.
-try { tokenInput.value = localStorage.getItem(TOKEN_KEY) || ""; } catch {}
-tokenInput.addEventListener("input", () => {
-  try { localStorage.setItem(TOKEN_KEY, tokenInput.value.trim()); } catch {}
-});
+// One source at a time: picking one clears the other.
+urlInput.addEventListener("input", () => { fileInput.value = ""; });
+fileInput.addEventListener("change", () => { urlInput.value = ""; });
 
-let analysisUrl = null;
-async function getAnalysisUrl() {
-  if (analysisUrl === null) {
-    // Relative URLs keep working when the Results Service sits under a path.
-    const response = await fetch("ui-config");
-    if (!response.ok) throw new Error(`ui-config answered ${response.status}`);
-    analysisUrl = (await response.json()).analysis_url;
-  }
-  return analysisUrl;
+function summary(result) {
+  if (result.status === "succeeded") return `${result.person_count} people`;
+  return `failed (${result.error.code}): ${result.error.message}`;
 }
 
 function setJobLine(text, className = "muted") {
@@ -100,194 +59,60 @@ function setJobLine(text, className = "muted") {
   jobLine.className = className;
 }
 
-// Only the latest submitted job is polled: a new submit bumps the generation,
-// and a poll from an older one (even mid-fetch) stops when it sees that.
-let pollGeneration = 0;
-
-// POST to the Analysis Service; the response, or null after showing the error.
-async function postToAnalysis(path, init) {
-  let url;
-  try {
-    url = await getAnalysisUrl();
-  } catch (error) {
-    setJobLine(`Could not load the page config (${error.message}).`, "error");
-    return null;
-  }
-  const headers = { ...init.headers, "Authorization": `Bearer ${tokenInput.value.trim()}` };
-  let response;
-  try {
-    response = await fetch(`${url}${path}`, { ...init, method: "POST", headers });
-  } catch (error) {
-    // A CORS block also lands here: open the page at RESULTS_PUBLIC_URL exactly.
-    setJobLine(`Could not reach the Analysis Service (${error.message}).`, "error");
-    return null;
-  }
-  const body = await response.json().catch(() => ({}));
-  if (response.status !== 202) {
-    setJobLine(`Rejected: ${response.status} ${describeDetail(body.detail)}`, "error");
-    return null;
-  }
-  return body;
-}
+// Only the latest submit is shown: a new one bumps the generation, and
+// anything still running for an older one stops when it sees that.
+let generation = 0;
+let objectUrl = null;
 
 $("submit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const generation = ++pollGeneration;
-  setJobLine("Submitting...");
-  const body = await postToAnalysis("/analyses", {
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_url: $("image-url").value }),
-  });
-  if (body === null) return;
-  setJobLine(`Job ${body.job_id}: pending...`);
-  poll(generation, body.job_id, body.result_url);
-});
-
-// One request per batch. Uploads aren't polled one by one: their Results
-// show up in the table on its next refresh.
-async function upload(files) {
-  if (files.length === 0) return;
-  ++pollGeneration;  // stop a URL job's poll from overwriting this line
-  setJobLine(`Uploading ${files.length} file(s)...`);
-  const form = new FormData();
-  for (const file of files) form.append("files", file);
-  // No Content-Type: the browser sets it with the multipart boundary.
-  const body = await postToAnalysis("/uploads", { body: form });
-  if (body === null) return;
-  setJobLine(`${body.length} jobs queued.`);
-  refreshTable();
-}
-
-$("upload-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  upload($("photos").files);
-});
-
-const drop = $("drop");
-drop.addEventListener("dragover", (event) => {
-  event.preventDefault();  // allows the drop
-  drop.classList.add("over");
-});
-drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (event) => {
-  event.preventDefault();
-  drop.classList.remove("over");
-  upload(event.dataTransfer.files);
-});
-
-function describeDetail(detail) {
-  if (Array.isArray(detail)) return detail.map((item) => item.msg).join("; ");
-  return detail || "";
-}
-
-function poll(generation, jobId, resultUrl) {
-  const startedAt = Date.now();
-  const tick = async () => {
-    if (generation !== pollGeneration) return;
-    const elapsed = Date.now() - startedAt;
-    if (elapsed >= GIVE_UP_AFTER_MS) {
-      setJobLine(`Job ${jobId}: still pending, check later.`);
-      return;
-    }
-    try {
-      const response = await fetch(resultUrl);
-      if (generation !== pollGeneration) return;
-      if (response.ok) {
-        const result = await response.json();
-        setJobLine(`Job ${jobId}: ${summary(result)}`, result.status);
-        refreshTable();
-        if (result.status === "succeeded") show(result);
-        return;
-      }
-    } catch {}
-    // 404 (not delivered yet) or a network blip: try again later.
-    setTimeout(tick, elapsed < FAST_FOR_MS ? FAST_POLL_MS : SLOW_POLL_MS);
-  };
-  tick();
-}
-
-function summary(result) {
-  if (result.status === "succeeded") return `${result.person_count} people`;
-  return `failed (${result.error.code}): ${result.error.message}`;
-}
-
-function cell(row, content) {
-  const td = row.insertCell();
-  if (content instanceof Node) td.append(content);
-  else td.textContent = content;
-  return td;
-}
-
-async function refreshTable() {
-  let response;
-  try {
-    response = await fetch("results?limit=50");
-  } catch {
+  const file = fileInput.files[0];
+  const imageUrl = urlInput.value.trim();
+  if (!file && !imageUrl) {
+    setJobLine("Give an image URL or pick a file.", "error");
     return;
   }
-  if (!response.ok) return;
-  const rows = (await response.json()).map((result) => {
-    const row = document.createElement("tr");
-    const status = cell(row, result.status);
-    status.className = result.status;
-    cell(row, result.person_count ?? "");
-    const link = document.createElement("a");
-    link.href = result.image_url;
-    link.textContent = result.image_url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.addEventListener("click", (event) => event.stopPropagation());
-    cell(row, link).className = "url";
-    cell(row, result.error?.code ?? "");
-    if (result.status === "succeeded") {
-      row.className = "clickable";
-      row.addEventListener("click", () => show(result));
+  const mine = ++generation;
+  const isCancelled = () => mine !== generation;
+  canvas.hidden = true;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = null;
+  setJobLine("Submitting...");
+  let job, src;
+  try {
+    if (file) {
+      [job] = await uploadFiles([file], token());
+      // Drawn from the browser's own copy, not fetched back from the API.
+      src = objectUrl = URL.createObjectURL(file);
+    } else {
+      job = await postToAnalysis("/analyses", token(), {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: imageUrl }),
+      });
+      src = imageUrl;
     }
-    return row;
+  } catch (error) {
+    if (!isCancelled()) setJobLine(error.message, "error");
+    return;
+  }
+  if (isCancelled()) return;
+  setJobLine(`Job ${job.job_id}: pending...`);
+  pollResult(job.result_url, {
+    isCancelled,
+    onGiveUp: () => setJobLine(`Job ${job.job_id}: still pending, check later.`),
+    onResult: async (result) => {
+      setJobLine(`Job ${job.job_id}: ${summary(result)}`, result.status);
+      if (result.status !== "succeeded") return;
+      try {
+        const image = await loadImage(src);
+        if (isCancelled()) return;
+        drawDetections(canvas, image, result.detections);
+        canvas.hidden = false;
+      } catch (error) {
+        if (!isCancelled()) setJobLine(`${jobLine.textContent}. ${error.message}`, "error");
+      }
+    },
   });
-  $("results").replaceChildren(...rows);
-}
-
-// The image being shown; a slower load of an earlier click is dropped.
-let shownImage = null;
-
-function show(result) {
-  viewer.textContent = `Loading ${result.image_url} ...`;
-  viewer.className = "muted";
-  // No crossOrigin: the canvas only draws, so a tainted canvas is fine and
-  // images from hosts without CORS headers still load.
-  const image = new Image();
-  shownImage = image;
-  image.onload = () => {
-    if (image !== shownImage) return;
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    // Boxes are in pixels of the original image, the canvas's own units.
-    context.lineWidth = Math.max(2, Math.round(image.naturalWidth / 300));
-    context.strokeStyle = getComputedStyle(document.documentElement)
-      .getPropertyValue("--box");
-    for (const box of result.detections) {
-      context.strokeRect(box.x, box.y, box.width, box.height);
-    }
-    canvas.hidden = false;
-    viewer.textContent = `${result.person_count} people in ${result.image_url}`;
-  };
-  image.onerror = () => {
-    if (image !== shownImage) return;
-    canvas.hidden = true;
-    viewer.textContent = `Could not load ${result.image_url} in the browser.`;
-    viewer.className = "error";
-  };
-  image.src = result.image_url;
-}
-
-// A hidden tab skips the refresh and catches up when it is shown again.
-refreshTable();
-setInterval(() => { if (!document.hidden) refreshTable(); }, TABLE_REFRESH_MS);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshTable();
 });
 </script>
 </body>

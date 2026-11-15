@@ -1,0 +1,13 @@
+/* Shared by the single (/) and batch (/batch) pages. Page-specific rules stay
+   inline in each page. */
+:root { color-scheme: light dark; --muted: #777; --ok: #1a7f37; --bad: #cf222e; }
+body { font: 15px/1.4 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.4rem; }
+nav { margin-bottom: 1rem; }
+form, .field { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+label { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; }
+input { flex: 1; min-width: 0; padding: 6px; font: inherit; }
+button { padding: 6px 14px; font: inherit; }
+.muted { color: var(--muted); }
+.succeeded { color: var(--ok); }
+.failed, .error { color: var(--bad); }

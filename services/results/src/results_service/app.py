@@ -14,7 +14,11 @@ from results_service.models import AnalysisResult
 from results_service.settings import ResultsSettings
 
 PORT = 8000
-UI_PAGE = files("results_service").joinpath("index.html").read_text()
+UI_FILES = files("results_service")
+SINGLE_PAGE = UI_FILES.joinpath("index.html").read_text()
+BATCH_PAGE = UI_FILES.joinpath("batch.html").read_text()
+UI_SCRIPT = UI_FILES.joinpath("ui.js").read_text()
+UI_STYLES = UI_FILES.joinpath("ui.css").read_text()
 
 
 def create_app(settings: ResultsSettings) -> FastAPI:
@@ -42,8 +46,20 @@ def create_app(settings: ResultsSettings) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
-    async def ui_page():
-        return UI_PAGE
+    async def single_page():
+        return SINGLE_PAGE
+
+    @app.get("/batch", response_class=HTMLResponse)
+    async def batch_page():
+        return BATCH_PAGE
+
+    @app.get("/ui.js")
+    async def ui_script():
+        return Response(UI_SCRIPT, media_type="text/javascript")
+
+    @app.get("/ui.css")
+    async def ui_styles():
+        return Response(UI_STYLES, media_type="text/css")
 
     @app.get("/ui-config")
     async def ui_config():
