@@ -3,22 +3,17 @@
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
 from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
 from analysis_service.queues import Action, Publisher
 from analysis_service.worker.detector import Detect, Detection
-from analysis_service.worker.images import ImageFailure, decode_image
+from analysis_service.worker.images import ImageFailure, LoadImage, decode_image
 
 MODEL = "yolox-s"
 
 logger = logging.getLogger(__name__)
-
-
-LoadImage = Callable[[str], Awaitable[bytes | bytearray]]
-"""Reads the image at a URL; raises ``ImageFailure`` if it can't."""
 
 
 async def analyse(
