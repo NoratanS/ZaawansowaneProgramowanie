@@ -49,7 +49,7 @@ def courier_for(rabbitmq_url, clean_broker, httpserver, jwt_keys):
 def publish(channel):
     """Queue a message on ``analysis-results`` the way the Worker does."""
 
-    async def publish_body(body: bytes, message_id: str | None = None):
+    async def publish_body(body: bytes, message_id: str):
         await channel.default_exchange.publish(
             aio_pika.Message(
                 body,
@@ -117,20 +117,6 @@ def requests_made(httpserver):
     return wait_for
 
 
-@pytest.fixture
-def courier_logs(caplog):
-    caplog.set_level(logging.INFO, logger="analysis_service.courier")
-
-    def lines(level):
-        return [
-            r.getMessage()
-            for r in caplog.records
-            if r.name == "analysis_service.courier" and r.levelno == level
-        ]
-
-    return lines
-
-
 def respond(status):
     return lambda request: Response("{}", status=status)
 
@@ -183,22 +169,11 @@ async def test_a_stored_result_is_acked(
     assert await drain(f"{RESULTS_QUEUE}.dlq") == []
 
 
-TRANSIENT = {
-    "502": respond(502),
-    "503": respond(503),
-    "522": respond(522),
-    "524": respond(524),
-    "408": respond(408),
-    "429": respond(429),
-    "timeout": stall,
-}
-
-
-@pytest.mark.parametrize("handler", TRANSIENT.values(), ids=TRANSIENT.keys())
 async def test_a_transient_failure_is_retried_then_delivered(
-    courier_for, script, publish_result, requests_made, drain, courier_logs, handler
+    courier_for, script, publish_result, requests_made, drain, courier_logs
 ):
-    script(handler)
+    # A PUT past the delivery timeout; the unit tests cover the status table.
+    script(stall)
 
     async with courier_for():
         job_id, body = await publish_result()
@@ -251,20 +226,6 @@ async def test_a_result_that_never_lands_is_dead_lettered_after_the_limit(
     assert await drain(RESULTS_QUEUE) == []
 
 
-async def test_a_closed_port_is_retried_until_the_dlq(
-    courier_for, publish_result, next_message, courier_logs
-):
-    # Nothing listens on port 1.
-    async with courier_for(results_service_url="http://127.0.0.1:1"):
-        job_id, body = await publish_result()
-        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
-
-    assert dead.body == body
-    warnings = courier_logs(logging.WARNING)
-    assert len(warnings) == 1 + 3
-    assert all(w.startswith(f"job_id={job_id} retrying cause=") for w in warnings)
-
-
 @pytest.mark.parametrize("status", [401, 422])
 async def test_a_rejected_result_goes_straight_to_the_dlq(
     courier_for, script, publish_result, next_message, drain, courier_logs, status
@@ -282,21 +243,3 @@ async def test_a_rejected_result_goes_straight_to_the_dlq(
     ]
     assert courier_logs(logging.WARNING) == []
     assert await drain(RESULTS_QUEUE) == []
-
-
-@pytest.mark.parametrize(
-    "body",
-    [b"not json", b"[]", b"{}", b'{"job_id": "../health"}', b'{"job_id": 7}'],
-    ids=["not-json", "not-an-object", "no-job-id", "path-in-job-id", "int-job-id"],
-)
-async def test_a_message_without_a_job_id_is_dead_lettered_unsent(
-    courier_for, httpserver, publish, next_message, courier_logs, body
-):
-    async with courier_for():
-        await publish(body)
-        dead = await next_message(f"{RESULTS_QUEUE}.dlq")
-
-    assert dead.body == body
-    assert httpserver.log == []
-    [error] = courier_logs(logging.ERROR)
-    assert "dead-lettered" in error

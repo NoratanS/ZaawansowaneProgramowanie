@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 import aio_pika
@@ -198,3 +199,17 @@ async def unit_client(unit_client_for):
 async def unit_anonymous_client(unit_client_for):
     async with unit_client_for(authorized=False) as client:
         yield client
+
+
+@pytest.fixture
+def courier_logs(caplog):
+    caplog.set_level(logging.INFO, logger="analysis_service.courier")
+
+    def lines(level):
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "analysis_service.courier" and r.levelno == level
+        ]
+
+    return lines
