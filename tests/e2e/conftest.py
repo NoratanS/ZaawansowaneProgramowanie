@@ -1,8 +1,9 @@
 """The full compose stack, driven from outside over HTTP.
 
-The stack runs as its own compose project on ports 18000/18001, so it never
-touches the dev stack. ``E2E_REUSE_STACK=1`` skips ``up``/``down`` and uses a
-stack that is already running; its private key is read from the running Courier.
+The stack runs as its own compose project, so it never touches the dev
+stack's data; it publishes the same fixed ports, so stop the dev stack
+first. ``E2E_REUSE_STACK=1`` skips ``up``/``down`` and uses a stack that
+is already running; its private key is read from the running Courier.
 """
 
 import os
@@ -21,17 +22,14 @@ POLL_INTERVAL_SECONDS = 0.5
 POLL_TIMEOUT_SECONDS = 60
 
 E2E_ENV = {
-    "ANALYSIS_API_PORT": "18000",
-    "RESULTS_PORT": "18001",
-    "RABBITMQ_MANAGEMENT_PORT": "15673",
     "RABBITMQ_DEFAULT_USER": "e2e",
     "RABBITMQ_DEFAULT_PASS": "e2e",
     "POSTGRES_PASSWORD": "e2e",
     "S3_ACCESS_KEY": "e2e-access",
     "S3_SECRET_KEY": "e2e-secret",
 }
-ANALYSIS_URL = f"http://localhost:{E2E_ENV['ANALYSIS_API_PORT']}"
-RESULTS_URL = f"http://localhost:{E2E_ENV['RESULTS_PORT']}"
+ANALYSIS_URL = "http://localhost:8000"
+RESULTS_URL = "http://localhost:8001"
 # Compose interpolates every ``${VAR:?}`` even for stop/start/exec/logs, which
 # never recreate a container; for those, any key value will do.
 PLACEHOLDER_KEYS = {"JWT_PRIVATE_KEY": "unused", "JWT_PUBLIC_KEY": "unused"}
