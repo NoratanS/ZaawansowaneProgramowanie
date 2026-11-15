@@ -20,7 +20,7 @@ from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
 from analysis_service.queues import NotQueued, Queue, confirming_broker
 from analysis_service.settings import AnalysisApiSettings
-from analysis_service.uploads import open_store
+from analysis_service.uploads import open_store, url_for
 
 PORT = 8000
 MAX_UPLOAD_FILES = 100
@@ -129,7 +129,9 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
                 )
         accepted = []
         for upload_id, file in zip(upload_ids, files):
-            job = await queue_job(request, f"{settings.uploads_base_url}/{upload_id}")
+            job = await queue_job(
+                request, url_for(upload_id, settings.uploads_base_url)
+            )
             accepted.append(
                 UploadAccepted(
                     filename=file.filename,

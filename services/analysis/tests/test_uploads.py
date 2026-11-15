@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from analysis_service.queues import JOBS_QUEUE
+from analysis_service.uploads import url_for
 
 pytestmark = pytest.mark.integration
 
@@ -31,12 +32,11 @@ async def test_each_uploaded_file_becomes_a_queued_job(client, drain, stored_key
         assert item["result_url"] == f"http://results.example/results/{job_id}"
     jobs = [json.loads(m.body) for m in await drain(JOBS_QUEUE)]
     assert [job["job_id"] for job in jobs] == [item["job_id"] for item in accepted]
-    upload_ids = []
-    for job in jobs:
-        prefix, upload_id = job["image_url"].rsplit("/", 1)
-        assert prefix == "http://analysis.example/uploads"
-        upload_ids.append(str(UUID(upload_id)))
-    assert sorted(await stored_keys()) == sorted(upload_ids)
+    upload_ids = sorted(await stored_keys())
+    assert sorted(job["image_url"] for job in jobs) == sorted(
+        url_for(UUID(upload_id), "http://analysis.example/uploads")
+        for upload_id in upload_ids
+    )
 
 
 def jpegs(count):
