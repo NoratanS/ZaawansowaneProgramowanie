@@ -15,11 +15,12 @@
     ],
     "error": null,
     "model": "yolox-s",
+    "worker": "worker-1",
     "requested_at": "2026-10-25T12:00:00Z",
     "analyzed_at": "2026-10-25T12:00:03.250000Z"
   },
   "expected": {
-    "worker": "reject",
+    "analysis_service": "reject",
     "results_service": "reject"
   }
 }

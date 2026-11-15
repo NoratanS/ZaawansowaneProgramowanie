@@ -52,6 +52,8 @@ class AnalysisResult(BaseModel):
     detections: list[Detection] | None
     error: ResultError | None
     model: Text
+    # None for Results from before Workers named themselves.
+    worker: Text | None = None
     requested_at: AwareDatetime
     analyzed_at: AwareDatetime
 

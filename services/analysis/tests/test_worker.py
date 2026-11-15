@@ -1,4 +1,5 @@
 import json
+import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -97,6 +98,7 @@ async def test_a_job_becomes_a_succeeded_result(
         "detections": [{"x": 1, "y": 2, "width": 8, "height": 9, "confidence": 0.9}],
         "error": None,
         "model": "yolox-s",
+        "worker": socket.gethostname(),
     }
     [image] = detect.images
     assert image.shape == (30, 40, 3)

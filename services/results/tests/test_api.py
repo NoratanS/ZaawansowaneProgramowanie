@@ -69,6 +69,27 @@ async def test_get_of_a_non_uuid_is_422(client):
 FAILED_RESULT = result_cases.load("failed-not-an-image").body
 
 
+async def test_a_stored_result_keeps_the_worker_that_produced_it(client):
+    url = f"/results/{SUCCEEDED['job_id']}"
+    await client.put(url, json={**SUCCEEDED, "worker": "3f2a9c1b7d4e"})
+
+    response = await client.get(url)
+
+    assert response.json()["worker"] == "3f2a9c1b7d4e"
+
+
+async def test_a_result_without_a_worker_is_stored_with_a_null_worker(client):
+    # Results queued by a Worker from before Workers named themselves.
+    body = result_cases.load("missing-worker").body
+    url = f"/results/{body['job_id']}"
+
+    response = await client.put(url, json=body)
+
+    assert response.status_code == 201
+    assert response.json()["worker"] is None
+    assert (await client.get(url)).json()["worker"] is None
+
+
 async def test_put_stores_a_failed_result(client):
     response = await client.put(
         f"/results/{FAILED_RESULT['job_id']}", json=FAILED_RESULT
