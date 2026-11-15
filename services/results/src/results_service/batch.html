@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People Counter: batch</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  :root { --line: #8884; }
+  body { max-width: 1100px; }
+  h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  #drop { border: 2px dashed #8888; border-radius: 6px; padding: 16px; text-align: center; margin-bottom: 8px; }
+  #drop.over { border-color: var(--ok); background: #8882; }
+  #status { min-height: 1.4em; }
+  #counters { display: flex; gap: 16px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  #legend { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+  #lanes .lane { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  #lanes .name { width: 80px; flex: none; }
+  #lanes .track { position: relative; flex: 1; height: 18px; border-bottom: 1px solid var(--line); }
+  #lanes .mark { position: absolute; top: 2px; width: 3px; height: 14px; margin-left: -1px; border-radius: 1px; }
+  #tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .tile { border: 1px solid var(--line); border-top: 6px solid var(--line); border-radius: 6px; padding: 6px; font-size: 13px; overflow: hidden; }
+  .tile img { width: 100%; height: 90px; object-fit: cover; display: block; border-radius: 3px; }
+  .tile .filename { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+<h1>People Counter</h1>
+<nav><a href="./">Single image</a> · <strong>Batch</strong></nav>
+
+<div class="field">
+  <label>Client token
+    <input id="token" type="password" autocomplete="off"
+           placeholder="docker compose exec courier issue-token --sub demo">
+  </label>
+</div>
+
+<div class="field">
+  <label>Photos
+    <input id="photos" type="file" accept="image/*" multiple>
+  </label>
+</div>
+<div id="drop" class="muted">...or drop up to 100 photos here</div>
+<div id="status" class="muted"></div>
+
+<div id="counters">
+  <span>Queued: <b id="n-queued">0</b></span>
+  <span>Done: <b id="n-done">0</b></span>
+  <span>Failed: <b id="n-failed">0</b></span>
+  <span>Elapsed: <b id="elapsed">0.0 s</b></span>
+  <span>Jobs/s: <b id="rate">0.00</b></span>
+  <button id="download" type="button" hidden>Download zip</button>
+</div>
+
+<h2>Workers</h2>
+<div id="legend" class="muted">No Results yet.</div>
+<div id="lanes"></div>
+
+<h2>Jobs</h2>
+<div id="tiles"></div>
+
+<script src="ui.js"></script>
+<script>
+"use strict";
+
+const MAX_FILES = 100;  // the POST /uploads limit
+const UNKNOWN_WORKER = "(unknown)";
+
+// Results from before Workers named themselves have no worker.
+const workerOf = (result) => result.worker ?? UNKNOWN_WORKER;
+
+const $ = (id) => document.getElementById(id);
+const token = bindToken($("token"));
+const statusLine = $("status");
+
+function setStatus(text, className = "muted") {
+  statusLine.textContent = text;
+  statusLine.className = className;
+}
+
+// One batch at a time: a new one bumps the generation, which stops the
+// polls and the clock of the old one.
+let generation = 0;
+let batch = null;
+
+async function startBatch(fileList) {
+  const files = [...fileList];
+  if (files.length === 0) return;
+  if (files.length > MAX_FILES) {
+    setStatus(`Pick at most ${MAX_FILES} files (got ${files.length}).`, "error");
+    return;
+  }
+  const mine = ++generation;
+  const isCancelled = () => mine !== generation;
+  if (batch) for (const job of batch.jobs) URL.revokeObjectURL(job.objectUrl);
+  batch = null;
+  render();
+  setStatus(`Uploading ${files.length} file(s)...`);
+  const startedAt = Date.now();
+  let accepted;
+  try {
+    accepted = await uploadFiles(files, token());
+  } catch (error) {
+    if (!isCancelled()) setStatus(error.message, "error");
+    return;
+  }
+  if (isCancelled()) return;
+  setStatus(`${accepted.length} jobs queued.`);
+  // The 202 body lists the jobs in upload order.
+  batch = {
+    startedAt,
+    finishedAt: null,
+    workers: new Map(),  // hostname -> { number, colour, count }, first seen first
+    jobs: accepted.map((job, i) => ({
+      number: i + 1,
+      file: files[i],
+      jobId: job.job_id,
+      objectUrl: URL.createObjectURL(files[i]),
+      state: "queued",  // then succeeded, failed or gave_up
+      result: null,
+      tile: null,  // built on first render, with stateLine
+      stateLine: null,
+    })),
+  };
+  for (const job of batch.jobs) {
+    pollResult(accepted[job.number - 1].result_url, {
+      isCancelled,
+      onResult: (result) => {
+        job.state = result.status;
+        job.result = result;
+        noteWorker(workerOf(result));
+        jobLanded();
+      },
+      onGiveUp: () => {
+        job.state = "gave_up";
+        jobLanded();
+      },
+    });
+  }
+  render();
+  const clock = setInterval(() => {
+    if (isCancelled() || batch.finishedAt !== null) clearInterval(clock);
+    renderCounters();
+  }, 200);
+}
+
+function noteWorker(hostname) {
+  const known = batch.workers.get(hostname);
+  if (known) {
+    known.count += 1;
+    return;
+  }
+  const number = batch.workers.size + 1;
+  // Golden-angle hues stay apart for any number of Workers.
+  const colour = hostname === UNKNOWN_WORKER
+    ? "#888" : `hsl(${(number - 1) * 137.5 % 360} 70% 45%)`;
+  batch.workers.set(hostname, { number, colour, count: 1 });
+}
+
+function jobLanded() {
+  if (batch.jobs.every((job) => job.state !== "queued")) {
+    batch.finishedAt = Date.now();
+    setStatus("Every job has landed.");
+  }
+  render();
+}
+
+function render() {
+  renderCounters();
+  renderTiles();
+  renderLegend();
+  renderLanes();
+}
+
+function renderCounters() {
+  const jobs = batch?.jobs ?? [];
+  const count = (state) => jobs.filter((job) => job.state === state).length;
+  const done = count("succeeded");
+  const failed = count("failed");
+  $("n-queued").textContent = count("queued");
+  $("n-done").textContent = done;
+  $("n-failed").textContent = failed;
+  const seconds = batch ? ((batch.finishedAt ?? Date.now()) - batch.startedAt) / 1000 : 0;
+  $("elapsed").textContent = `${seconds.toFixed(1)} s`;
+  $("rate").textContent = seconds > 0 ? ((done + failed) / seconds).toFixed(2) : "0.00";
+  $("download").hidden = !batch || batch.finishedAt === null;
+}
+
+// Tiles are built once per batch and updated in place, so thumbnails don't
+// reload on every Result.
+function renderTiles() {
+  const jobs = batch?.jobs ?? [];
+  for (const job of jobs) {
+    if (!job.tile) buildTile(job);
+    const { tile, stateLine } = job;
+    stateLine.textContent = describeState(job);
+    stateLine.className = job.state === "queued" || job.state === "gave_up" ? "muted" : job.state;
+    if (job.result) {
+      const hostname = workerOf(job.result);
+      const worker = batch.workers.get(hostname);
+      tile.style.borderTopColor = worker.colour;
+      tile.title = `Worker ${worker.number}: ${hostname}`;
+    }
+  }
+  const tiles = $("tiles");
+  if (tiles.childElementCount !== jobs.length) {
+    tiles.replaceChildren(...jobs.map((job) => job.tile));
+  }
+}
+
+function buildTile(job) {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  const image = document.createElement("img");
+  image.src = job.objectUrl;
+  image.alt = "";
+  const name = document.createElement("div");
+  name.className = "filename";
+  name.textContent = name.title = job.file.name;
+  job.stateLine = document.createElement("div");
+  tile.append(image, name, job.stateLine);
+  job.tile = tile;
+}
+
+function describeState(job) {
+  if (job.state === "queued") return "queued";
+  if (job.state === "gave_up") return "still pending, check later";
+  if (job.state === "succeeded") return `succeeded: ${job.result.person_count} people`;
+  return `failed: ${job.result.error.code}`;
+}
+
+function renderLegend() {
+  const legend = $("legend");
+  if (!batch || batch.workers.size === 0) {
+    legend.textContent = "No Results yet.";
+    legend.className = "muted";
+    return;
+  }
+  legend.className = "";
+  legend.replaceChildren(...[...batch.workers].map(([hostname, worker]) => {
+    const item = document.createElement("span");
+    item.title = hostname;
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = worker.colour;
+    item.append(swatch, `Worker ${worker.number}: ${worker.count} job(s)`);
+    return item;
+  }));
+}
+
+// One row per Worker, a mark at each job's analyzed_at on a shared time axis
+// from the first requested_at to the last analyzed_at.
+function renderLanes() {
+  const landed = (batch?.jobs ?? []).filter((job) => job.result);
+  if (landed.length === 0) {
+    $("lanes").replaceChildren();
+    return;
+  }
+  const start = Math.min(...landed.map((job) => Date.parse(job.result.requested_at)));
+  const end = Math.max(...landed.map((job) => Date.parse(job.result.analyzed_at)));
+  const span = Math.max(end - start, 1);
+  $("lanes").replaceChildren(...[...batch.workers].map(([hostname, worker]) => {
+    const lane = document.createElement("div");
+    lane.className = "lane";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = `Worker ${worker.number}`;
+    name.title = hostname;
+    const track = document.createElement("div");
+    track.className = "track";
+    for (const job of landed) {
+      if (workerOf(job.result) !== hostname) continue;
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.style.background = worker.colour;
+      const at = Date.parse(job.result.analyzed_at);
+      mark.style.left = `${(at - start) / span * 100}%`;
+      mark.title = `${job.file.name} at ${((at - start) / 1000).toFixed(2)} s`;
+      track.append(mark);
+    }
+    lane.append(name, track);
+    return lane;
+  }));
+}
+
+$("photos").addEventListener("change", (event) => {
+  startBatch(event.target.files);  // copies the list before its first await
+  event.target.value = "";  // so picking the same files again starts a new batch
+});
+
+const drop = $("drop");
+drop.addEventListener("dragover", (event) => {
+  event.preventDefault();  // allows the drop
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("over");
+  startBatch(event.dataTransfer.files);
+});
+
+// --- Download: results.csv plus each succeeded image with its boxes ---
+
+const CSV_COLUMNS = [
+  "filename", "job_id", "status", "person_count", "error_code", "error_message",
+  "worker", "requested_at", "analyzed_at",
+];
+
+function csvField(value) {
+  let text = value === null || value === undefined ? "" : String(value);
+  // A text cell starting with = + - @ tab or CR runs as a formula in a
+  // spreadsheet (CSV injection); a leading ' makes it plain text (OWASP).
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function resultsCsv(jobs) {
+  const rows = jobs.map((job) => {
+    const r = job.result;
+    return [
+      job.file.name, job.jobId, r ? r.status : "pending", r?.person_count,
+      r?.error?.code, r?.error?.message, r?.worker, r?.requested_at, r?.analyzed_at,
+    ];
+  });
+  return [CSV_COLUMNS, ...rows].map((row) => row.map(csvField).join(",")).join("\r\n") + "\r\n";
+}
+
+// images/<NNN>-<filename>.jpg, with the file's own extension dropped.
+function imagePath(job) {
+  const stem = job.file.name.replace(/\.[^.]*$/, "").replace(/[\/\\]/g, "_");
+  return `images/${String(job.number).padStart(3, "0")}-${stem}.jpg`;
+}
+
+async function boxedJpeg(job) {
+  const image = await loadImage(job.objectUrl);
+  const canvas = document.createElement("canvas");
+  drawDetections(canvas, image, job.result.detections);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+$("download").addEventListener("click", async () => {
+  const button = $("download");
+  const jobs = batch.jobs;
+  button.disabled = true;
+  button.textContent = "Building zip...";
+  try {
+    const entries = [{ name: "results.csv", data: new TextEncoder().encode(resultsCsv(jobs)) }];
+    for (const job of jobs) {
+      if (job.state !== "succeeded") continue;
+      try {
+        entries.push({ name: imagePath(job), data: await boxedJpeg(job) });
+      } catch {
+        // A file the browser can't decode still has its CSV row.
+      }
+    }
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(zipStore(entries));
+    link.download = "people-counter-batch.zip";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 60 * 1000);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Download zip";
+  }
+});
+
+// --- Store-only (no compression) zip writer ---
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function zipStore(entries) {
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const UTF8_NAMES = 0x0800;
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = new TextEncoder().encode(entry.name);
+    const crc = crc32(entry.data);
+    const size = entry.data.length;
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);  // version needed
+    local.setUint16(6, UTF8_NAMES, true);
+    local.setUint16(8, 0, true);  // method: store
+    local.setUint16(10, dosTime, true);
+    local.setUint16(12, dosDate, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, size, true);
+    local.setUint32(22, size, true);
+    local.setUint16(26, name.length, true);
+    local.setUint16(28, 0, true);  // extra length
+    parts.push(local, name, entry.data);
+
+    const header = new DataView(new ArrayBuffer(46));
+    header.setUint32(0, 0x02014b50, true);
+    header.setUint16(4, 20, true);  // version made by
+    header.setUint16(6, 20, true);  // version needed
+    header.setUint16(8, UTF8_NAMES, true);
+    header.setUint16(10, 0, true);
+    header.setUint16(12, dosTime, true);
+    header.setUint16(14, dosDate, true);
+    header.setUint32(16, crc, true);
+    header.setUint32(20, size, true);
+    header.setUint32(24, size, true);
+    header.setUint16(28, name.length, true);
+    // Extra, comment, disk, attributes stay 0.
+    header.setUint32(42, offset, true);
+    central.push(header, name);
+    offset += 30 + name.length + size;
+  }
+  const centralSize = central.reduce((sum, part) => sum + part.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
+}
+</script>
+</body>
+</html>
