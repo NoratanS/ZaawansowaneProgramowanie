@@ -8,10 +8,9 @@ import pytest
 
 from fakes import FakeDetector, FakeJobs, png
 
-from analysis_service.messages import AnalysisJob
+from analysis_service.messages import AnalysisJob, Box
 from analysis_service.queues import Action, NotQueued
 from analysis_service.worker.analyse import handle_job
-from analysis_service.worker.detector import Detection
 from analysis_service.worker.images import ImageFailure
 
 pytestmark = pytest.mark.unit
@@ -38,7 +37,7 @@ def body_for(image_url=URL):
 async def test_a_succeeded_job_publishes_its_result_and_is_acked():
     job, body = body_for()
     results = FakeJobs()
-    detect = FakeDetector([Detection(x=1, y=1, width=4, height=4, confidence=0.8)])
+    detect = FakeDetector([Box(x=1, y=1, width=4, height=4, confidence=0.8)])
 
     action = await handle_job(body, load_png, detect, results, worker=WORKER)
 
@@ -79,7 +78,7 @@ def job_lines(caplog):
 
 async def test_each_job_logs_one_info_line(caplog):
     caplog.set_level(logging.INFO, logger="analysis_service.worker.analyse")
-    one_person = FakeDetector([Detection(x=1, y=1, width=4, height=4, confidence=0.8)])
+    one_person = FakeDetector([Box(x=1, y=1, width=4, height=4, confidence=0.8)])
     good, good_body = body_for()
     bad, bad_body = body_for("http://images.example/missing")
     results = FakeJobs()

@@ -16,10 +16,10 @@ def png(width, height):
 
 
 class FakeDetector:
-    """Stands in for YOLOX: returns canned detections and records its calls."""
+    """Stands in for YOLOX: returns canned boxes and records its calls."""
 
-    def __init__(self, detections=(), error=None):
-        self.detections = list(detections)
+    def __init__(self, boxes=(), error=None):
+        self.boxes = list(boxes)
         self.error = error
         self.images = []
 
@@ -27,7 +27,7 @@ class FakeDetector:
         self.images.append(image)
         if self.error is not None:
             raise self.error
-        return self.detections
+        return self.boxes
 
 
 class FakeJobs:

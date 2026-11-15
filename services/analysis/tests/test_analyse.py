@@ -4,9 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from analysis_service.messages import AnalysisJob
+from analysis_service.messages import AnalysisJob, Box
 from analysis_service.worker.analyse import analyse
-from analysis_service.worker.detector import Detection
 from analysis_service.worker.images import ImageFailure
 from fakes import FakeDetector, png
 
@@ -40,13 +39,12 @@ def job_for(image_url=URL):
     )
 
 
-async def test_a_job_becomes_a_succeeded_result_with_clipped_rounded_boxes():
+async def test_a_job_becomes_a_succeeded_result_with_the_detected_boxes():
     job = job_for()
     detect = FakeDetector(
         [
-            # Sticks out left and bottom: clipped to the image, then rounded.
-            Detection(x=-5.4, y=2.6, width=20.0, height=40.0, confidence=0.9),
-            Detection(x=10.2, y=5.0, width=8.6, height=10.4, confidence=0.6),
+            Box(x=0, y=3, width=15, height=27, confidence=0.9),
+            Box(x=10, y=5, width=9, height=10, confidence=0.6),
         ]
     )
 
@@ -70,46 +68,6 @@ async def test_a_job_becomes_a_succeeded_result_with_clipped_rounded_boxes():
     }
     [image] = detect.images
     assert image.shape == (30, 40, 3)
-
-
-async def boxes_for(*detections, width=40, height=30):
-    """The boxes ``analyse`` reports for these detections on a blank image."""
-    result = await analyse(
-        job_for(), serving(png(width, height)), FakeDetector(detections), worker=WORKER
-    )
-    assert result.person_count == len(result.detections)
-    return [box.model_dump() for box in result.detections]
-
-
-OUTSIDE = {
-    "left": Detection(x=-10.0, y=5.0, width=5.0, height=5.0, confidence=0.9),
-    "right": Detection(x=50.0, y=5.0, width=5.0, height=5.0, confidence=0.9),
-    "above": Detection(x=5.0, y=-20.0, width=5.0, height=10.0, confidence=0.9),
-    "below": Detection(x=5.0, y=31.0, width=5.0, height=5.0, confidence=0.9),
-    # Inside, but under half a pixel wide: rounds to zero width.
-    "sliver": Detection(x=10.2, y=5.0, width=0.2, height=5.0, confidence=0.9),
-}
-
-
-@pytest.mark.parametrize("outside", OUTSIDE.values(), ids=OUTSIDE.keys())
-async def test_boxes_clipped_away_entirely_are_dropped(outside):
-    kept = Detection(x=1.0, y=1.0, width=4.0, height=4.0, confidence=0.8)
-
-    assert await boxes_for(outside, kept) == [
-        {"x": 1, "y": 1, "width": 4, "height": 4, "confidence": 0.8}
-    ]
-
-
-async def test_a_box_bigger_than_the_image_is_clipped_to_the_whole_image():
-    huge = Detection(x=-5.0, y=-5.0, width=100.0, height=100.0, confidence=0.7)
-
-    assert await boxes_for(huge) == [
-        {"x": 0, "y": 0, "width": 40, "height": 30, "confidence": 0.7}
-    ]
-
-
-async def test_no_detections_is_a_count_of_zero():
-    assert await boxes_for() == []
 
 
 CODES = ["image_unreachable", "not_an_image", "image_too_large", "image_url_forbidden"]
