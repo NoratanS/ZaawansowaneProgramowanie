@@ -1,8 +1,8 @@
 import pytest
 
-import results_service
+from results_service import main
 
 
 @pytest.mark.unit
 def test_package_imports():
-    assert results_service.__name__ == "results_service"
+    assert callable(main.main)

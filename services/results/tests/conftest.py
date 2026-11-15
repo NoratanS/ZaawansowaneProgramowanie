@@ -8,7 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from results_service.app import create_app
+from results_service.main import create_app
 from results_service.settings import ResultsSettings
 
 # Nothing listens on port 1, so any query fails with a connection error.

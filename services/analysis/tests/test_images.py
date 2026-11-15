@@ -9,8 +9,8 @@ import httpx
 import numpy as np
 import pytest
 
-from analysis_service import images
-from analysis_service.images import (
+from analysis_service.worker import images
+from analysis_service.worker.images import (
     ImageFailure,
     decode_image,
     fetch_image,
@@ -296,7 +296,7 @@ def decode_in_fresh_process(env):
     # OpenCV reads the pixel cap once at import, so each case needs its own process.
     script = (
         "import cv2, numpy as np\n"
-        "from analysis_service.images import ImageFailure, decode_image\n"
+        "from analysis_service.worker.images import ImageFailure, decode_image\n"
         "ok, png = cv2.imencode('.png', np.zeros((40, 40, 3), np.uint8))\n"
         "try:\n"
         "    print(decode_image(png.tobytes()).shape)\n"

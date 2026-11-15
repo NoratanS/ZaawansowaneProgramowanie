@@ -1,11 +1,19 @@
-import pytest
+import importlib
 
-import analysis_service
+import pytest
 
 
 @pytest.mark.unit
-def test_package_imports():
-    assert analysis_service.__name__ == "analysis_service"
+@pytest.mark.parametrize(
+    "module",
+    [
+        "analysis_service.api.main",
+        "analysis_service.worker.main",
+        "analysis_service.courier.main",
+    ],
+)
+def test_package_imports(module):
+    assert callable(importlib.import_module(module).main)
 
 
 @pytest.mark.model

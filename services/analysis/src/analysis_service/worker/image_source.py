@@ -7,8 +7,8 @@ from uuid import UUID
 
 import httpx
 
-from analysis_service.images import ImageFailure, fetch_image, read_capped
 from analysis_service.uploads import StoredUpload, upload_id_in
+from analysis_service.worker.images import ImageFailure, fetch_image, read_capped
 
 
 class Uploads(Protocol):

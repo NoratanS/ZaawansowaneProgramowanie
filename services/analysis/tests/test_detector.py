@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import pytest
 
-from analysis_service.detector import load_detector
+from analysis_service.worker.detector import load_detector
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

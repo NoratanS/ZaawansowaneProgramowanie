@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from analysis_service import yolox
+from analysis_service.worker import yolox
 
 pytestmark = pytest.mark.unit
 

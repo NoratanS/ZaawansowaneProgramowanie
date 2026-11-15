@@ -31,4 +31,4 @@ RUN uv sync --frozen --package analysis-service
 ENV PATH="/app/.venv/bin:$PATH" \
     MODEL_PATH=${MODEL_PATH}
 
-CMD ["python", "-m", "analysis_service.worker"]
+CMD ["python", "-m", "analysis_service.worker.main"]

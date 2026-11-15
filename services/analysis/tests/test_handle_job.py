@@ -8,11 +8,11 @@ import pytest
 
 from fakes import FakeDetector, FakeJobs, png
 
-from analysis_service.detector import Detection
-from analysis_service.images import ImageFailure
 from analysis_service.messages import AnalysisJob
 from analysis_service.queues import Action, NotQueued
-from analysis_service.worker import handle_job
+from analysis_service.worker.analyse import handle_job
+from analysis_service.worker.detector import Detection
+from analysis_service.worker.images import ImageFailure
 
 pytestmark = pytest.mark.unit
 
@@ -73,12 +73,12 @@ def job_lines(caplog):
     return [
         r.getMessage()
         for r in caplog.records
-        if r.name == "analysis_service.worker" and r.levelno == logging.INFO
+        if r.name == "analysis_service.worker.analyse" and r.levelno == logging.INFO
     ]
 
 
 async def test_each_job_logs_one_info_line(caplog):
-    caplog.set_level(logging.INFO, logger="analysis_service.worker")
+    caplog.set_level(logging.INFO, logger="analysis_service.worker.analyse")
     one_person = FakeDetector([Detection(x=1, y=1, width=4, height=4, confidence=0.8)])
     good, good_body = body_for()
     bad, bad_body = body_for("http://images.example/missing")

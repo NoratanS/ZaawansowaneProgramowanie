@@ -2,8 +2,8 @@ from uuid import UUID
 
 import pytest
 
-from analysis_service.images import ImageFailure
 from analysis_service.uploads import upload_id_in, url_for
+from analysis_service.worker.images import ImageFailure
 
 pytestmark = pytest.mark.unit
 

@@ -4,10 +4,10 @@ from uuid import uuid4
 
 import pytest
 
-from analysis_service.detector import Detection
-from analysis_service.images import ImageFailure
 from analysis_service.messages import AnalysisJob
-from analysis_service.worker import analyse
+from analysis_service.worker.analyse import analyse
+from analysis_service.worker.detector import Detection
+from analysis_service.worker.images import ImageFailure
 from fakes import FakeDetector, png
 
 pytestmark = pytest.mark.unit

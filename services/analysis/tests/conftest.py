@@ -9,7 +9,7 @@ from aiobotocore.session import get_session
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from analysis_service.api import create_app
+from analysis_service.api.main import create_app
 from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
 from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import UPLOADS_BUCKET
@@ -228,13 +228,13 @@ async def unit_anonymous_client(unit_client_for):
 
 @pytest.fixture
 def courier_logs(caplog):
-    caplog.set_level(logging.INFO, logger="analysis_service.courier")
+    caplog.set_level(logging.INFO, logger="analysis_service.courier.deliver")
 
     def lines(level):
         return [
             r.getMessage()
             for r in caplog.records
-            if r.name == "analysis_service.courier" and r.levelno == level
+            if r.name == "analysis_service.courier.deliver" and r.levelno == level
         ]
 
     return lines
