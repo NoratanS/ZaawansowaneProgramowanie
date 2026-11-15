@@ -6,9 +6,9 @@ import pytest
 
 from fakes import MemoryUploadStore, png
 
-from analysis_service.image_source import ImageSource
-from analysis_service.images import ImageFailure
 from analysis_service.uploads import url_for
+from analysis_service.worker.image_source import ImageSource
+from analysis_service.worker.images import ImageFailure
 
 pytestmark = pytest.mark.unit
 

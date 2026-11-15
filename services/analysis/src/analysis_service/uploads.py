@@ -14,8 +14,8 @@ from aiobotocore.session import get_session
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from analysis_service.images import ImageFailure
 from analysis_service.settings import AnalysisApiSettings, WorkerSettings
+from analysis_service.worker.images import ImageFailure
 
 UPLOADS_BUCKET = "uploads"
 CHUNK_BYTES = 64 * 1024

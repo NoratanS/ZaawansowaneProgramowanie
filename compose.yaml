@@ -16,7 +16,7 @@ x-api-check: &api-check
 services:
   analysis-api:
     <<: *analysis
-    command: [python, -m, analysis_service.api]
+    command: [python, -m, analysis_service.api.main]
     environment:
       RABBITMQ_URL: *rabbitmq-url
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
@@ -26,7 +26,7 @@ services:
     healthcheck: *api-check
   worker:
     <<: *analysis
-    command: [python, -m, analysis_service.worker]
+    command: [python, -m, analysis_service.worker.main]
     environment:
       RABBITMQ_URL: *rabbitmq-url
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
@@ -34,7 +34,7 @@ services:
     deploy: {replicas: 2}
   courier:
     <<: *analysis
-    command: [python, -m, analysis_service.courier]
+    command: [python, -m, analysis_service.courier.main]
     # No depends_on results: the Courier must start and retry while it is down.
     environment:
       RABBITMQ_URL: *rabbitmq-url

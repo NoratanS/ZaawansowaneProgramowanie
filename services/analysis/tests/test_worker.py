@@ -12,10 +12,10 @@ from werkzeug import Response
 
 from fakes import FakeDetector, png
 
-from analysis_service.detector import Detection
 from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE, QueueConfig
 from analysis_service.settings import WorkerSettings
-from analysis_service.worker import build_worker
+from analysis_service.worker.detector import Detection
+from analysis_service.worker.main import build_worker
 
 pytestmark = pytest.mark.integration
 

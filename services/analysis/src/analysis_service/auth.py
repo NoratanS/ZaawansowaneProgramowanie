@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 ISSUER = "people-counter"
@@ -63,16 +63,21 @@ def verify(public_key: str, token: str, *, audience: str) -> dict:
     )
 
 
-def require_token(public_key: str, audience: str):
+def require_token(audience: str):
     """A FastAPI dependency that lets only valid tokens for ``audience`` through.
 
-    Any failure is ``401`` with ``WWW-Authenticate: Bearer``.
+    It verifies with ``request.app.state.settings.jwt_public_key``. Any failure
+    is ``401`` with ``WWW-Authenticate: Bearer``.
     """
     # Its default auto_error already answers a missing or non-Bearer header
     # with 401 + WWW-Authenticate: Bearer.
     bearer = HTTPBearer()
 
-    def check(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> None:
+    def check(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    ) -> None:
+        public_key = request.app.state.settings.jwt_public_key
         try:
             verify(public_key, credentials.credentials, audience=audience)
         except jwt.InvalidTokenError as exc:

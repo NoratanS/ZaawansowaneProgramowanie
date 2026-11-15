@@ -8,7 +8,7 @@ from os import PathLike
 import cv2
 import numpy as np
 
-from analysis_service import yolox
+from analysis_service.worker import yolox
 
 
 @dataclass(frozen=True)

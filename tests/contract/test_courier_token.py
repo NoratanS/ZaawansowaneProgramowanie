@@ -3,6 +3,7 @@ with its own copy in results_service.auth. These tests catch drift between them.
 """
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -15,8 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 def _check(public_key, token):
+    # The check reads the key where create_app puts the settings.
+    settings = SimpleNamespace(jwt_public_key=public_key)
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(settings=settings))
+    )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    require_courier_token(public_key)(credentials)
+    require_courier_token()(request, credentials)
 
 
 def test_the_results_service_accepts_a_courier_token(jwt_keys):

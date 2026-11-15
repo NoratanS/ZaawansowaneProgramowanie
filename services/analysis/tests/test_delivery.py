@@ -4,7 +4,7 @@ from uuid import UUID
 import httpx
 import pytest
 
-from analysis_service.courier import deliver
+from analysis_service.courier.deliver import deliver
 from analysis_service.queues import Action, Received
 
 pytestmark = pytest.mark.unit

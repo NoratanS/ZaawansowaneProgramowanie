@@ -10,7 +10,7 @@ import aio_pika
 import pytest
 from werkzeug import Response
 
-from analysis_service.courier import build_courier
+from analysis_service.courier.main import build_courier
 from analysis_service.queues import RESULTS_QUEUE, QueueConfig
 from analysis_service.settings import CourierSettings
 import result_cases

@@ -6,7 +6,7 @@ Keep in step with ``analysis_service.auth``, which mints them.
 """
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 ISSUER = "people-counter"
@@ -15,17 +15,23 @@ AUDIENCE = "results-service"
 LEEWAY_SECONDS = 30
 
 
-def require_courier_token(public_key: str):
-    """A FastAPI dependency; any failure is ``401`` + ``WWW-Authenticate: Bearer``."""
+def require_courier_token():
+    """A FastAPI dependency; any failure is ``401`` + ``WWW-Authenticate: Bearer``.
+
+    It verifies with ``request.app.state.settings.jwt_public_key``.
+    """
     # Its default auto_error already answers a missing or non-Bearer header
     # with 401 + WWW-Authenticate: Bearer.
     bearer = HTTPBearer()
 
-    def check(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> None:
+    def check(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    ) -> None:
         try:
             jwt.decode(
                 credentials.credentials,
-                public_key,
+                request.app.state.settings.jwt_public_key,
                 algorithms=[ALGORITHM],
                 audience=AUDIENCE,
                 issuer=ISSUER,
