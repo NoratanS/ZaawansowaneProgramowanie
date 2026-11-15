@@ -6,9 +6,9 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from analysis_service.messages import AnalysisJob, AnalysisResult, Box, ResultError
+from analysis_service.messages import AnalysisJob, AnalysisResult, ResultError
 from analysis_service.queues import Action, Publisher
-from analysis_service.worker.detector import Detect, Detection
+from analysis_service.worker.detector import Detect
 from analysis_service.worker.images import ImageFailure, LoadImage, decode_image
 
 MODEL = "yolox-s"
@@ -45,9 +45,7 @@ async def analyse(
             status="failed",
             error=ResultError(code=failure.code, message=failure.message),
         )
-    height, width = image.shape[:2]
-    found = await asyncio.to_thread(detect, image)
-    boxes = [box for d in found if (box := _to_box(d, width, height))]
+    boxes = await asyncio.to_thread(detect, image)
     return result(status="succeeded", person_count=len(boxes), detections=boxes)
 
 
@@ -69,27 +67,6 @@ async def handle_job(
     await results.publish(result, message_id=str(job.job_id))
     _log_outcome(result, started)
     return Action.ACK
-
-
-def _to_box(detection: Detection, width: int, height: int) -> Box | None:
-    """Clip a detection to the image and round it; ``None`` if nothing is left."""
-
-    def clip(value: float, limit: int) -> int:
-        return round(min(max(value, 0), limit))
-
-    left = clip(detection.x, width)
-    top = clip(detection.y, height)
-    right = clip(detection.x + detection.width, width)
-    bottom = clip(detection.y + detection.height, height)
-    if right <= left or bottom <= top:
-        return None
-    return Box(
-        x=left,
-        y=top,
-        width=right - left,
-        height=bottom - top,
-        confidence=detection.confidence,
-    )
 
 
 def _log_outcome(result: AnalysisResult, started: float) -> None:

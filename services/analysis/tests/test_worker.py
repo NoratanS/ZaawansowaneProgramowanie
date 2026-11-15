@@ -12,9 +12,9 @@ from werkzeug import Response
 
 from fakes import FakeDetector, png
 
+from analysis_service.messages import Box
 from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE, QueueConfig
 from analysis_service.settings import WorkerSettings
-from analysis_service.worker.detector import Detection
 from analysis_service.worker.main import build_worker
 
 pytestmark = pytest.mark.integration
@@ -76,8 +76,8 @@ async def test_a_job_becomes_a_succeeded_result(
     httpserver.expect_request("/people.png").respond_with_data(
         png(width=40, height=30), content_type="image/png"
     )
-    # Clipping and rounding are unit-tested in test_analyse.py.
-    detect = FakeDetector([Detection(x=1, y=2, width=8, height=9, confidence=0.9)])
+    # Clipping and rounding are unit-tested in test_detector.py.
+    detect = FakeDetector([Box(x=1, y=2, width=8, height=9, confidence=0.9)])
     before = datetime.now(UTC)
 
     async with worker_for(detect):
