@@ -4,8 +4,9 @@ It also takes photo uploads: each file is stored and becomes an Analysis Job
 whose ``image_url`` points back at ``GET /uploads/{id}``.
 """
 
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any, BinaryIO, Protocol
 from uuid import UUID, uuid4
 
 import uvicorn
@@ -20,7 +21,7 @@ from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
 from analysis_service.queues import NotQueued, Queue, confirming_broker
 from analysis_service.settings import AnalysisApiSettings
-from analysis_service.uploads import open_store, url_for
+from analysis_service.uploads import StoredUpload, UploadStore, open_store, url_for
 
 PORT = 8000
 MAX_UPLOAD_FILES = 100
@@ -39,22 +40,40 @@ class UploadAccepted(AnalysisAccepted):
     filename: str | None
 
 
-def create_app(settings: AnalysisApiSettings) -> FastAPI:
+class JobsPublisher(Protocol):
+    """What the API needs from the jobs queue (``Queue`` in production)."""
+
+    async def publish(self, message: Any, message_id: str) -> None:
+        """Queue ``message``, or raise ``NotQueued``."""
+
+
+class UploadStorage(Protocol):
+    """What the API needs from the Upload store (``UploadStore`` in production)."""
+
+    async def create_bucket_if_missing(self) -> None: ...
+
+    async def put(self, upload_id: UUID, file: BinaryIO, content_type: str) -> None: ...
+
+    def open(
+        self, upload_id: UUID
+    ) -> AbstractAsyncContextManager[StoredUpload | None]: ...
+
+
+def create_app(
+    settings: AnalysisApiSettings,
+    jobs: JobsPublisher | None = None,
+    store: UploadStorage | None = None,
+) -> FastAPI:
+    """The API; a ``None`` adapter is replaced by the real RabbitMQ or S3 one."""
     results_base_url = settings.results_base_url
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async with AsyncExitStack() as stack:
-            # A missing queue gives 503 instead of a 202 for a lost job.
-            broker = confirming_broker(settings.rabbitmq_url)
-            await broker.start()
-            stack.push_async_callback(broker.stop)
-            jobs = Queue(broker, settings.jobs_queue)
-            await jobs.declare()
-            store = await stack.enter_async_context(open_store(settings))
-            await store.create_bucket_if_missing()
-            app.state.jobs = jobs
-            app.state.store = store
+            app.state.jobs = await _open_jobs(settings, stack) if jobs is None else jobs
+            app.state.store = (
+                await _open_store(settings, stack) if store is None else store
+            )
             yield
 
     app = FastAPI(title="Analysis Service", lifespan=lifespan)
@@ -174,6 +193,24 @@ def create_app(settings: AnalysisApiSettings) -> FastAPI:
         )
 
     return app
+
+
+async def _open_jobs(settings: AnalysisApiSettings, stack: AsyncExitStack) -> Queue:
+    # A missing queue gives 503 instead of a 202 for a lost job.
+    broker = confirming_broker(settings.rabbitmq_url)
+    await broker.start()
+    stack.push_async_callback(broker.stop)
+    jobs = Queue(broker, settings.jobs_queue)
+    await jobs.declare()
+    return jobs
+
+
+async def _open_store(
+    settings: AnalysisApiSettings, stack: AsyncExitStack
+) -> UploadStore:
+    store = await stack.enter_async_context(open_store(settings))
+    await store.create_bucket_if_missing()
+    return store
 
 
 def _check_upload_limits(files: list[UploadFile], max_bytes: int) -> None:

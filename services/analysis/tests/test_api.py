@@ -8,11 +8,10 @@ import pytest
 
 from analysis_service.queues import JOBS_QUEUE
 
-pytestmark = pytest.mark.integration
-
 IMAGE_URL = "https://images.example/people.jpg"
 
 
+@pytest.mark.integration
 async def test_analysis_request_is_accepted_and_queued(client, drain):
     before = datetime.now(UTC)
 
@@ -35,12 +34,13 @@ async def test_analysis_request_is_accepted_and_queued(client, drain):
     assert before <= requested_at <= datetime.now(UTC)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "results_public_url",
     ["https://pc.example/results-app", "https://pc.example/results-app/"],
 )
-async def test_result_url_has_no_double_slash(client_for, results_public_url):
-    async with client_for(results_public_url=results_public_url) as client:
+async def test_result_url_has_no_double_slash(unit_client_for, results_public_url):
+    async with unit_client_for(results_public_url=results_public_url) as client:
         response = await client.post("/analyses", json={"image_url": IMAGE_URL})
 
     job_id = response.json()["job_id"]
@@ -49,15 +49,17 @@ async def test_result_url_has_no_double_slash(client_for, results_public_url):
     assert response.headers["location"] == expected
 
 
-async def test_same_image_twice_gets_two_jobs(client, drain):
-    first = await client.post("/analyses", json={"image_url": IMAGE_URL})
-    second = await client.post("/analyses", json={"image_url": IMAGE_URL})
+@pytest.mark.unit
+async def test_same_image_twice_gets_two_jobs(unit_client, fake_jobs):
+    first = await unit_client.post("/analyses", json={"image_url": IMAGE_URL})
+    second = await unit_client.post("/analyses", json={"image_url": IMAGE_URL})
 
     assert first.json()["job_id"] != second.json()["job_id"]
-    queued = [json.loads(m.body)["job_id"] for m in await drain(JOBS_QUEUE)]
+    queued = [str(job.job_id) for job in fake_jobs.published]
     assert queued == [first.json()["job_id"], second.json()["job_id"]]
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "body",
     [
@@ -71,13 +73,16 @@ async def test_same_image_twice_gets_two_jobs(client, drain):
     ],
     ids=["missing", "null", "malformed", "relative", "ftp", "file", "no-host"],
 )
-async def test_bad_image_url_is_rejected_and_nothing_is_queued(client, drain, body):
-    response = await client.post("/analyses", json=body)
+async def test_bad_image_url_is_rejected_and_nothing_is_queued(
+    unit_client, fake_jobs, body
+):
+    response = await unit_client.post("/analyses", json=body)
 
     assert response.status_code == 422
-    assert await drain(JOBS_QUEUE) == []
+    assert fake_jobs.published == []
 
 
+@pytest.mark.integration
 async def test_unroutable_publish_gives_503(client, channel):
     await channel.queue_delete(JOBS_QUEUE)
 
@@ -86,6 +91,7 @@ async def test_unroutable_publish_gives_503(client, channel):
     assert response.status_code == 503
 
 
+@pytest.mark.integration
 async def test_publish_nacked_by_the_broker_gives_503(client, channel, drain):
     # Swap in a queue that refuses every message, so the broker nacks.
     await channel.queue_delete(JOBS_QUEUE)
@@ -101,6 +107,7 @@ async def test_publish_nacked_by_the_broker_gives_503(client, channel, drain):
     assert await drain(JOBS_QUEUE) == []
 
 
+@pytest.mark.integration
 async def test_lost_broker_connection_gives_503(client, rabbitmq):
     rabbitmq.exec(["rabbitmqctl", "close_all_connections", "test"])
     # Let the client notice; it then waits several seconds to reconnect.

@@ -1,7 +1,12 @@
-"""Test doubles shared by the Worker's unit and integration tests."""
+"""Test doubles shared by the unit and integration tests."""
+
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
+
+from analysis_service.queues import NotQueued
+from analysis_service.uploads import StoredUpload
 
 
 def png(width, height):
@@ -23,3 +28,44 @@ class FakeDetector:
         if self.error is not None:
             raise self.error
         return self.detections
+
+
+class FakeJobs:
+    """Stands in for the jobs queue: records each published job.
+
+    Set ``refusing`` to make every publish raise ``NotQueued``.
+    """
+
+    def __init__(self):
+        self.published = []
+        self.refusing = False
+
+    async def publish(self, message, message_id):
+        if self.refusing:
+            raise NotQueued(f"message_id={message_id} not confirmed")
+        self.published.append(message)
+
+
+class MemoryUploadStore:
+    """Stands in for the S3 Upload store: keeps each upload in a dict."""
+
+    def __init__(self):
+        self.uploads = {}  # upload_id -> (content_type, data)
+
+    async def create_bucket_if_missing(self):
+        pass
+
+    async def put(self, upload_id, file, content_type):
+        self.uploads[upload_id] = (content_type, file.read())
+
+    @asynccontextmanager
+    async def open(self, upload_id):
+        if upload_id not in self.uploads:
+            yield None
+            return
+        content_type, data = self.uploads[upload_id]
+
+        async def chunks():
+            yield data
+
+        yield StoredUpload(content_type=content_type, length=len(data), chunks=chunks())

@@ -6,11 +6,10 @@ import pytest
 from analysis_service.queues import JOBS_QUEUE
 from analysis_service.uploads import url_for
 
-pytestmark = pytest.mark.integration
-
 JPEG = b"\xff\xd8\xff\xe0 not really a jpeg"
 
 
+@pytest.mark.integration
 async def test_each_uploaded_file_becomes_a_queued_job(client, drain, stored_keys):
     files = [
         ("files", ("one.jpg", JPEG, "image/jpeg")),
@@ -43,13 +42,15 @@ def jpegs(count):
     return [("files", (f"{n}.jpg", JPEG, "image/jpeg")) for n in range(count)]
 
 
-async def test_a_hundred_files_are_accepted(client, drain):
-    response = await client.post("/uploads", files=jpegs(100))
+@pytest.mark.unit
+async def test_a_hundred_files_are_accepted(unit_client, fake_jobs):
+    response = await unit_client.post("/uploads", files=jpegs(100))
 
     assert response.status_code == 202
-    assert len(await drain(JOBS_QUEUE)) == 100
+    assert len(fake_jobs.published) == 100
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "files, code",
     [
@@ -66,40 +67,45 @@ async def test_a_hundred_files_are_accepted(client, drain):
     ids=["101-files", "no-files", "11-mb-file"],
 )
 async def test_a_broken_limit_rejects_the_whole_request(
-    client, drain, stored_keys, files, code
+    unit_client, fake_jobs, fake_store, files, code
 ):
     if files:
-        response = await client.post("/uploads", files=files)
+        response = await unit_client.post("/uploads", files=files)
     else:
-        response = await client.post("/uploads", data={"other": "field"})
+        response = await unit_client.post("/uploads", data={"other": "field"})
 
     assert response.status_code == code
-    assert await drain(JOBS_QUEUE) == []
-    assert await stored_keys() == []
+    assert fake_jobs.published == []
+    assert fake_store.uploads == {}
 
 
-async def test_uploads_need_a_client_token(anonymous_client, drain, stored_keys):
-    response = await anonymous_client.post("/uploads", files=jpegs(1))
+@pytest.mark.unit
+async def test_uploads_need_a_client_token(
+    unit_anonymous_client, fake_jobs, fake_store
+):
+    response = await unit_anonymous_client.post("/uploads", files=jpegs(1))
 
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
-    assert await drain(JOBS_QUEUE) == []
-    assert await stored_keys() == []
+    assert fake_jobs.published == []
+    assert fake_store.uploads == {}
 
 
-async def test_uploads_refuse_a_courier_token(client, mint_token, drain):
+@pytest.mark.unit
+async def test_uploads_refuse_a_courier_token(unit_client, mint_token, fake_jobs):
     courier = {"Authorization": f"Bearer {mint_token('results-service')}"}
 
-    response = await client.post("/uploads", files=jpegs(1), headers=courier)
+    response = await unit_client.post("/uploads", files=jpegs(1), headers=courier)
 
     assert response.status_code == 401
-    assert await drain(JOBS_QUEUE) == []
+    assert fake_jobs.published == []
 
 
-async def test_an_unqueued_upload_gives_503(client, channel):
-    await channel.queue_delete(JOBS_QUEUE)
+@pytest.mark.unit
+async def test_an_unqueued_upload_gives_503(unit_client, fake_jobs):
+    fake_jobs.refusing = True
 
-    response = await client.post("/uploads", files=jpegs(2))
+    response = await unit_client.post("/uploads", files=jpegs(2))
 
     assert response.status_code == 503
 
@@ -113,6 +119,7 @@ async def upload_one(client, drain, name, data, content_type):
     return json.loads(message.body)["image_url"].removeprefix("http://analysis.example")
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "content_type, served_as",
     [
@@ -135,6 +142,7 @@ async def test_an_upload_is_served_back_without_a_token(
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+@pytest.mark.integration
 async def test_a_served_upload_cannot_run_script(client, drain):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
     path = await upload_one(client, drain, "x.svg", svg, "image/svg+xml")
@@ -145,6 +153,7 @@ async def test_a_served_upload_cannot_run_script(client, drain):
     assert response.headers["content-security-policy"] == "sandbox"
 
 
+@pytest.mark.integration
 async def test_an_upload_larger_than_a_chunk_streams_back_whole(client, drain):
     data = bytes(range(256)) * 1024  # 256 KiB: several chunks
     path = await upload_one(client, drain, "big.jpg", data, "image/jpeg")
@@ -155,7 +164,8 @@ async def test_an_upload_larger_than_a_chunk_streams_back_whole(client, drain):
     assert response.headers["content-length"] == str(len(data))
 
 
-async def test_an_unknown_upload_is_404(anonymous_client):
-    response = await anonymous_client.get(f"/uploads/{uuid4()}")
+@pytest.mark.unit
+async def test_an_unknown_upload_is_404(unit_anonymous_client):
+    response = await unit_anonymous_client.get(f"/uploads/{uuid4()}")
 
     assert response.status_code == 404
