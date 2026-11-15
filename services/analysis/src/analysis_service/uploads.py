@@ -14,7 +14,7 @@ from aiobotocore.session import get_session
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from analysis_service.images import ImageFailure, read_capped
+from analysis_service.images import ImageFailure
 from analysis_service.settings import UploadSettings
 
 UPLOADS_BUCKET = "uploads"
@@ -67,13 +67,6 @@ class UploadStore:
                 length=response["ContentLength"],
                 chunks=body.iter_chunks(CHUNK_BYTES),
             )
-
-    async def read_image(self, upload_id: UUID, max_bytes: int) -> bytearray:
-        """The upload's bytes, failing as a fetched image would."""
-        async with self.open(upload_id) as upload:
-            if upload is None:
-                raise ImageFailure("image_unreachable", "the upload does not exist")
-            return await read_capped(upload.chunks, max_bytes, length=upload.length)
 
 
 def _status(exc: ClientError) -> int | None:

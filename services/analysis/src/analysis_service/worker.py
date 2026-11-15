@@ -111,7 +111,15 @@ class _ImageResources:
         )
         # The API creates the bucket, not the Worker.
         store = await self._resources.enter_async_context(open_store(self._settings))
-        self.source = ImageSource(http, store, self._settings)
+        settings = self._settings
+        self.source = ImageSource(
+            http,
+            store,
+            public_url=settings.analysis_public_url,
+            max_bytes=settings.image_max_bytes,
+            fetch_timeout_seconds=settings.image_fetch_timeout_seconds,
+            allowed_hosts=settings.image_allowed_hosts,
+        )
 
     async def aclose(self) -> None:
         await self._resources.aclose()
