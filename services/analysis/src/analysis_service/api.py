@@ -6,7 +6,7 @@ whose ``image_url`` points back at ``GET /uploads/{id}``.
 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any, BinaryIO, Protocol
+from typing import BinaryIO, Protocol
 from uuid import UUID, uuid4
 
 import uvicorn
@@ -19,7 +19,7 @@ from starlette.datastructures import UploadFile
 
 from analysis_service.auth import ANALYSIS_AUDIENCE, require_token
 from analysis_service.messages import AnalysisJob
-from analysis_service.queues import NotQueued, Queue, confirming_broker
+from analysis_service.queues import NotQueued, Publisher, Queue, confirming_broker
 from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import StoredUpload, UploadStore, open_store, url_for
 
@@ -40,13 +40,6 @@ class UploadAccepted(AnalysisAccepted):
     filename: str | None
 
 
-class JobsPublisher(Protocol):
-    """What the API needs from the jobs queue (``Queue`` in production)."""
-
-    async def publish(self, message: Any, message_id: str) -> None:
-        """Queue ``message``, or raise ``NotQueued``."""
-
-
 class UploadStorage(Protocol):
     """What the API needs from the Upload store (``UploadStore`` in production)."""
 
@@ -61,7 +54,7 @@ class UploadStorage(Protocol):
 
 def create_app(
     settings: AnalysisApiSettings,
-    jobs: JobsPublisher | None = None,
+    jobs: Publisher | None = None,
     store: UploadStorage | None = None,
 ) -> FastAPI:
     """The API; a ``None`` adapter is replaced by the real RabbitMQ or S3 one."""
