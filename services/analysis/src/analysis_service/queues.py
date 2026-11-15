@@ -6,7 +6,7 @@ After the limit, the broker dead-letters the message through ``<queue>.dlx``
 """
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -38,8 +38,17 @@ class Action(Enum):
     DEAD_LETTER = "dead_letter"  # reject(requeue=False): straight to the DLQ
 
 
-# Gets a message's raw body, headers and message_id; says what to do with it.
-Handler = Callable[[bytes, Mapping[str, Any], str | None], Awaitable[Action]]
+@dataclass(frozen=True)
+class Received:
+    """One consumed message: its raw body, its id, and how often it was redelivered."""
+
+    body: bytes
+    message_id: str | None
+    delivery_count: int
+
+
+# Gets one consumed message; says what to do with it.
+Handler = Callable[[Received], Awaitable[Action]]
 
 
 class NotQueued(Exception):
@@ -152,7 +161,11 @@ class Queue:
         async def on_message(message: RabbitMessage) -> None:
             try:
                 action = await handler(
-                    message.body, message.headers, message.message_id
+                    Received(
+                        body=message.body,
+                        message_id=message.message_id,
+                        delivery_count=message.headers.get("x-delivery-count", 0),
+                    )
                 )
             except Exception:
                 logger.exception(

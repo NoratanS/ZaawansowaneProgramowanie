@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from analysis_service.courier import deliver
-from analysis_service.queues import Action
+from analysis_service.queues import Action, Received
 
 pytestmark = pytest.mark.unit
 
@@ -27,9 +27,8 @@ class FakePut:
 
 async def attempt(outcome, body=BODY, delivery_count=0, message_id=None):
     put = FakePut(outcome)
-    action = await deliver(
-        body, put, delivery_count=delivery_count, timeout=0.2, message_id=message_id
-    )
+    received = Received(body=body, message_id=message_id, delivery_count=delivery_count)
+    action = await deliver(received, put, timeout=0.2)
     return action, put
 
 
