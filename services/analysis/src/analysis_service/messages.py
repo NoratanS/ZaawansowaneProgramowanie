@@ -56,6 +56,7 @@ class AnalysisResult(BaseModel):
     detections: list[Box] | None = None
     error: ResultError | None = None
     model: str
+    worker: str
     requested_at: UtcDatetime
     analyzed_at: UtcDatetime
 

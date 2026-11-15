@@ -25,6 +25,7 @@ results = sa.Table(
     sa.Column("error_code", sa.Text()),
     sa.Column("error_message", sa.Text()),
     sa.Column("model", sa.Text()),
+    sa.Column("worker", sa.Text()),
     sa.Column("requested_at", sa.DateTime(timezone=True)),
     sa.Column("analyzed_at", sa.DateTime(timezone=True)),
     sa.Column("stored_at", sa.DateTime(timezone=True)),
@@ -85,6 +86,7 @@ def _to_row(result: AnalysisResult) -> dict:
         "error_code": None if result.error is None else result.error.code,
         "error_message": None if result.error is None else result.error.message,
         "model": result.model,
+        "worker": result.worker,
         "requested_at": result.requested_at,
         "analyzed_at": result.analyzed_at,
     }
@@ -102,6 +104,7 @@ def _from_row(row: sa.Row) -> AnalysisResult:
         detections=row.detections,
         error=error,
         model=row.model,
+        worker=row.worker,
         requested_at=row.requested_at,
         analyzed_at=row.analyzed_at,
     )

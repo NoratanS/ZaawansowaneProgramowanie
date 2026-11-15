@@ -13,6 +13,7 @@ from fakes import FakeDetector, png
 pytestmark = pytest.mark.unit
 
 URL = "http://images.example/people.png"
+WORKER = "worker-1"
 
 
 def serving(data):
@@ -49,7 +50,9 @@ async def test_a_job_becomes_a_succeeded_result_with_clipped_rounded_boxes():
         ]
     )
 
-    result = await analyse(job, serving(png(width=40, height=30)), detect)
+    result = await analyse(
+        job, serving(png(width=40, height=30)), detect, worker=WORKER
+    )
 
     assert result.model_dump(exclude={"analyzed_at"}) == {
         "job_id": job.job_id,
@@ -62,6 +65,7 @@ async def test_a_job_becomes_a_succeeded_result_with_clipped_rounded_boxes():
         ],
         "error": None,
         "model": "yolox-s",
+        "worker": "worker-1",
         "requested_at": job.requested_at,
     }
     [image] = detect.images
@@ -71,7 +75,7 @@ async def test_a_job_becomes_a_succeeded_result_with_clipped_rounded_boxes():
 async def boxes_for(*detections, width=40, height=30):
     """The boxes ``analyse`` reports for these detections on a blank image."""
     result = await analyse(
-        job_for(), serving(png(width, height)), FakeDetector(detections)
+        job_for(), serving(png(width, height)), FakeDetector(detections), worker=WORKER
     )
     assert result.person_count == len(result.detections)
     return [box.model_dump() for box in result.detections]
@@ -116,7 +120,9 @@ async def test_an_image_failure_becomes_a_failed_result_with_its_code(code):
     job = job_for()
     detect = FakeDetector()
 
-    result = await analyse(job, failing(code, "the image is no good"), detect)
+    result = await analyse(
+        job, failing(code, "the image is no good"), detect, worker=WORKER
+    )
 
     assert result.model_dump(exclude={"analyzed_at"}) == {
         "job_id": job.job_id,
@@ -126,6 +132,7 @@ async def test_an_image_failure_becomes_a_failed_result_with_its_code(code):
         "detections": None,
         "error": {"code": code, "message": "the image is no good"},
         "model": "yolox-s",
+        "worker": "worker-1",
         "requested_at": job.requested_at,
     }
     assert detect.images == []
@@ -135,7 +142,7 @@ async def test_an_image_failure_becomes_a_failed_result_with_its_code(code):
 async def test_bytes_that_dont_decode_become_a_failed_result(data):
     detect = FakeDetector()
 
-    result = await analyse(job_for(), serving(data), detect)
+    result = await analyse(job_for(), serving(data), detect, worker=WORKER)
 
     assert result.status == "failed"
     assert result.error.code == "not_an_image"
@@ -154,7 +161,7 @@ async def test_decoding_runs_off_the_event_loop():
     data = ThreadRecordingBytes(png(8, 8))
     data.threads = []
 
-    result = await analyse(job_for(), serving(data), FakeDetector())
+    result = await analyse(job_for(), serving(data), FakeDetector(), worker=WORKER)
 
     assert result.status == "succeeded"
     # A blocking decode on the loop thread would stall heartbeats and other jobs.
@@ -165,6 +172,6 @@ async def test_decoding_runs_off_the_event_loop():
 async def test_analyzed_at_is_the_time_of_the_analysis():
     before = datetime.now(UTC)
 
-    result = await analyse(job_for(), serving(png(8, 8)), FakeDetector())
+    result = await analyse(job_for(), serving(png(8, 8)), FakeDetector(), worker=WORKER)
 
     assert before <= result.analyzed_at <= datetime.now(UTC)

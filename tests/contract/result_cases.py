@@ -17,7 +17,7 @@ Outcome = Literal["accept", "reject"]
 class ResultCase(NamedTuple):
     name: str
     body: dict
-    worker: Outcome
+    analysis_service: Outcome
     results_service: Outcome
 
 
@@ -26,7 +26,7 @@ def load(name: str) -> ResultCase:
     case = json.loads((CASES / f"{name}.json").read_text())
     expected = case["expected"]
     return ResultCase(
-        name, case["body"], expected["worker"], expected["results_service"]
+        name, case["body"], expected["analysis_service"], expected["results_service"]
     )
 
 

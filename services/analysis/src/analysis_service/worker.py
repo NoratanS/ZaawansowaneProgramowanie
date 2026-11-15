@@ -7,6 +7,7 @@ import asyncio
 import logging
 import math
 import os
+import socket
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -47,9 +48,9 @@ LoadImage = Callable[[str], Awaitable[bytes | bytearray]]
 
 
 async def analyse(
-    job: AnalysisJob, load_image: LoadImage, detect: Detect
+    job: AnalysisJob, load_image: LoadImage, detect: Detect, *, worker: str
 ) -> AnalysisResult:
-    """Count the people in the job's image.
+    """Count the people in the job's image; the Result names ``worker``.
 
     An image that can't be loaded or decoded gives a failed Result; any
     other error raises.
@@ -60,6 +61,7 @@ async def analyse(
             job_id=job.job_id,
             image_url=job.image_url,
             model=MODEL,
+            worker=worker,
             requested_at=job.requested_at,
             analyzed_at=datetime.now(UTC),
             **outcome,
@@ -81,7 +83,12 @@ async def analyse(
 
 
 async def handle_job(
-    body: bytes, load_image: LoadImage, detect: Detect, results: Publisher
+    body: bytes,
+    load_image: LoadImage,
+    detect: Detect,
+    results: Publisher,
+    *,
+    worker: str,
 ) -> Action:
     """Analyse one job body, publish its Result, log one line and ACK.
 
@@ -89,7 +96,7 @@ async def handle_job(
     """
     started = time.perf_counter()
     job = AnalysisJob.model_validate_json(body)
-    result = await analyse(job, load_image, detect)
+    result = await analyse(job, load_image, detect, worker=worker)
     await results.publish(result, message_id=str(job.job_id))
     _log_outcome(result, started)
     return Action.ACK
@@ -130,6 +137,8 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
     jobs = Queue(broker, settings.jobs_queue)
     results = Queue(broker, settings.results_queue)
     images = _ImageResources(settings)
+    # In compose the hostname is the container id, one per replica.
+    worker = socket.gethostname()
     app = FastStream(broker)
 
     @app.on_startup
@@ -145,7 +154,9 @@ def build_worker(settings: WorkerSettings, detect: Detect) -> FastStream:
         await images.aclose()
 
     async def on_job(received: Received) -> Action:
-        return await handle_job(received.body, images.source.load, detect, results)
+        return await handle_job(
+            received.body, images.source.load, detect, results, worker=worker
+        )
 
     jobs.consume(on_job, prefetch=settings.worker_prefetch)
 
@@ -179,8 +190,9 @@ def _log_outcome(result: AnalysisResult, started: float) -> None:
         status += f" error={result.error.code}"
     duration_ms = round((time.perf_counter() - started) * 1000)
     logger.info(
-        "job_id=%s status=%s person_count=%s duration_ms=%d",
+        "job_id=%s worker=%s status=%s person_count=%s duration_ms=%d",
         result.job_id,
+        result.worker,
         status,
         result.person_count,
         duration_ms,

@@ -11,19 +11,19 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from analysis_service import messages as worker
+from analysis_service import messages as analysis_service
 from result_cases import all_cases
 from results_service import models as results_service
 
 pytestmark = pytest.mark.unit
 
 MODELS = {
-    "worker": worker.AnalysisResult,
+    "analysis_service": analysis_service.AnalysisResult,
     "results_service": results_service.AnalysisResult,
 }
 CASES = all_cases()
 ACCEPTED_BY_BOTH = [
-    case for case in CASES if case.worker == case.results_service == "accept"
+    case for case in CASES if case.analysis_service == case.results_service == "accept"
 ]
 
 
@@ -48,10 +48,10 @@ def test_each_side_accepts_or_rejects_each_case_as_expected(case, side):
 @pytest.mark.parametrize(
     ("source", "target"),
     [
-        (worker.AnalysisResult, results_service.AnalysisResult),
-        (results_service.AnalysisResult, worker.AnalysisResult),
+        (analysis_service.AnalysisResult, results_service.AnalysisResult),
+        (results_service.AnalysisResult, analysis_service.AnalysisResult),
     ],
-    ids=["worker-to-results-service", "results-service-to-worker"],
+    ids=["analysis-service-to-results-service", "results-service-to-analysis-service"],
 )
 def test_each_model_accepts_the_others_json(source, target, case):
     built = source.model_validate_json(json.dumps(case.body))
@@ -63,13 +63,13 @@ def test_each_model_accepts_the_others_json(source, target, case):
 
 
 def test_both_sides_have_the_same_error_codes():
-    assert get_args(worker.ErrorCode) == get_args(results_service.ErrorCode)
+    assert get_args(analysis_service.ErrorCode) == get_args(results_service.ErrorCode)
 
 
 @pytest.mark.parametrize(
     "codes",
-    [get_args(worker.ErrorCode), get_args(results_service.ErrorCode)],
-    ids=["worker", "results-service"],
+    [get_args(analysis_service.ErrorCode), get_args(results_service.ErrorCode)],
+    ids=["analysis-service", "results-service"],
 )
 def test_every_error_code_has_a_failed_case_both_sides_accept(codes):
     covered = {

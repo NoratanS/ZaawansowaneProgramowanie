@@ -10,11 +10,12 @@
       "message": "The image is over 20 MB."
     },
     "model": "yolox-s",
+    "worker": "worker-1",
     "requested_at": "2026-10-25T12:00:00Z",
     "analyzed_at": "2026-10-25T12:00:01Z"
   },
   "expected": {
-    "worker": "accept",
+    "analysis_service": "accept",
     "results_service": "accept"
   }
 }

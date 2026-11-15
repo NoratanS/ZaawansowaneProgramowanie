@@ -7,11 +7,12 @@
     "detections": [],
     "error": null,
     "model": "yolox-s",
+    "worker": "worker-1",
     "requested_at": "2026-10-25T12:00:00Z",
     "analyzed_at": "2026-10-25T12:00:03Z"
   },
   "expected": {
-    "worker": "accept",
+    "analysis_service": "accept",
     "results_service": "accept"
   }
 }
