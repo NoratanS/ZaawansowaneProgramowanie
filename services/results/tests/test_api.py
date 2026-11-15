@@ -276,6 +276,30 @@ async def test_root_serves_the_ui_page(unreachable_db_client):
     assert "<title>People Counter</title>" in response.text
 
 
+async def test_batch_serves_the_batch_page(unreachable_db_client):
+    response = await unreachable_db_client.get("/batch")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>People Counter: batch</title>" in response.text
+
+
+async def test_ui_js_is_served_as_javascript(unreachable_db_client):
+    response = await unreachable_db_client.get("/ui.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/javascript")
+    assert "function postToAnalysis" in response.text
+
+
+async def test_ui_css_is_served_as_css(unreachable_db_client):
+    response = await unreachable_db_client.get("/ui.css")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+    assert ".muted" in response.text
+
+
 async def test_ui_config_points_at_the_analysis_service(http_client):
     # The engine connects lazily, so this database is never reached.
     async with http_client(
