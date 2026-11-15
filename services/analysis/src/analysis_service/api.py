@@ -65,7 +65,6 @@ def create_app(
     store: UploadStorage | None = None,
 ) -> FastAPI:
     """The API; a ``None`` adapter is replaced by the real RabbitMQ or S3 one."""
-    results_base_url = settings.results_base_url
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -109,7 +108,7 @@ def create_app(
         return job
 
     def result_url_of(job: AnalysisJob) -> str:
-        return f"{results_base_url}/results/{job.job_id}"
+        return f"{settings.results_public_url}/results/{job.job_id}"
 
     @app.post(
         "/analyses",
@@ -149,7 +148,7 @@ def create_app(
         accepted = []
         for upload_id, file in zip(upload_ids, files):
             job = await queue_job(
-                request, url_for(upload_id, settings.uploads_base_url)
+                request, url_for(upload_id, settings.analysis_public_url)
             )
             accepted.append(
                 UploadAccepted(

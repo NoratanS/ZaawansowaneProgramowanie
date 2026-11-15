@@ -80,18 +80,18 @@ def _status(exc: ClientError) -> int | None:
     return exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
 
 
-def url_for(upload_id: UUID, uploads_base_url: str) -> str:
-    """The URL an Analysis Job carries for this upload."""
-    return f"{uploads_base_url.rstrip('/')}/{upload_id}"
+def url_for(upload_id: UUID, analysis_public_url: str) -> str:
+    """The URL an Analysis Job carries for this upload: ``GET /uploads/{id}``."""
+    return f"{analysis_public_url}/uploads/{upload_id}"
 
 
-def upload_id_in(url: str, uploads_base_url: str) -> UUID | None:
+def upload_id_in(url: str, analysis_public_url: str) -> UUID | None:
     """The upload id if ``url`` points at an upload, else ``None``.
 
     A URL under the uploads path whose last part isn't an id names no upload,
     so it fails like a missing one.
     """
-    prefix = uploads_base_url.rstrip("/") + "/"
+    prefix = f"{analysis_public_url}/uploads/"
     if not url.startswith(prefix):
         return None
     try:

@@ -57,7 +57,7 @@ def stored_upload(settings, store):
     async def put(data):
         upload_id = uuid4()
         await store.put(upload_id, io.BytesIO(data), "image/png")
-        return url_for(upload_id, settings.uploads_base_url)
+        return url_for(upload_id, settings.analysis_public_url)
 
     return put
 
@@ -81,7 +81,7 @@ async def test_an_upload_over_the_cap_is_too_large(source_for, stored_upload):
 async def test_an_upload_that_isnt_there_is_unreachable(source_for, settings, path):
     # url_for takes only an id, so the bad-id URL is built by hand.
     with pytest.raises(ImageFailure) as failure:
-        await source_for().load(f"{settings.uploads_base_url}/{path}")
+        await source_for().load(f"{settings.analysis_public_url}/uploads/{path}")
 
     assert failure.value.code == "image_unreachable"
 

@@ -12,10 +12,23 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_private_key,
     load_pem_public_key,
 )
-from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    HttpUrl,
+    SecretStr,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode
 
-from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE, QueueConfig
+from analysis_service.queues import (
+    JOBS_QUEUE,
+    RESULTS_QUEUE,
+    QueueConfig,
+    check_retry_range,
+)
 
 # Where the Analysis image bakes YOLOX-S (see services/analysis/Dockerfile).
 BAKED_MODEL_PATH = Path("/opt/models/object_detection_yolox_2022nov.onnx")
@@ -23,6 +36,24 @@ BAKED_MODEL_PATH = Path("/opt/models/object_detection_yolox_2022nov.onnx")
 Seconds = Annotated[float, Field(gt=0)]
 Limit = Annotated[int, Field(ge=1)]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+_HTTP_URL = TypeAdapter(HttpUrl)
+
+
+def _without_trailing_slash(value: str) -> str:
+    return str(_HTTP_URL.validate_python(value)).rstrip("/")
+
+
+def _is_an_rsa_public_key(value: str) -> str:
+    # RS256 needs RSA; any other key would fail every request, not startup.
+    if not isinstance(load_pem_public_key(value.encode()), RSAPublicKey):
+        raise ValueError("must be an RSA public key")
+    return value
+
+
+# An http(s) URL with no trailing slash, so f"{url}/path" has no double slash.
+BaseUrl = Annotated[str, AfterValidator(_without_trailing_slash)]
+PublicKeyPem = Annotated[str, AfterValidator(_is_an_rsa_public_key)]
 
 
 class LoggingSettings(BaseSettings):
@@ -44,12 +75,7 @@ class UploadSettings(BaseSettings):
     s3_access_key: str
     s3_secret_key: SecretStr
     # The Analysis Service as the browser sees it; uploads are served under it.
-    analysis_public_url: HttpUrl
-
-    @property
-    def uploads_base_url(self) -> str:
-        """Where ``GET /uploads/{id}`` lives, with no trailing slash."""
-        return str(self.analysis_public_url).rstrip("/") + "/uploads"
+    analysis_public_url: BaseUrl
 
 
 class JobsQueueSettings(BaseSettings):
@@ -58,9 +84,13 @@ class JobsQueueSettings(BaseSettings):
     jobs_queue_delivery_limit: Limit = 3
 
     @model_validator(mode="after")
-    def _jobs_queue_is_valid(self) -> Self:
-        # Fail at startup, not on first use; QueueConfig owns the rules.
-        self.jobs_queue
+    def _jobs_queue_retry_range(self) -> Self:
+        # Fail at startup, not on first use.
+        check_retry_range(
+            JOBS_QUEUE,
+            self.jobs_queue_retry_min_seconds,
+            self.jobs_queue_retry_max_seconds,
+        )
         return self
 
     @property
@@ -79,8 +109,13 @@ class ResultsQueueSettings(BaseSettings):
     results_queue_delivery_limit: Limit = 20
 
     @model_validator(mode="after")
-    def _results_queue_is_valid(self) -> Self:
-        self.results_queue
+    def _results_queue_retry_range(self) -> Self:
+        # Fail at startup, not on first use.
+        check_retry_range(
+            RESULTS_QUEUE,
+            self.results_queue_retry_min_seconds,
+            self.results_queue_retry_max_seconds,
+        )
         return self
 
     @property
@@ -94,15 +129,7 @@ class ResultsQueueSettings(BaseSettings):
 
 
 class PublicKeySettings(BaseSettings):
-    jwt_public_key: str
-
-    @field_validator("jwt_public_key")
-    @classmethod
-    def _is_an_rsa_public_key(cls, value: str) -> str:
-        # RS256 needs RSA; any other key would fail every request, not startup.
-        if not isinstance(load_pem_public_key(value.encode()), RSAPublicKey):
-            raise ValueError("must be an RSA public key")
-        return value
+    jwt_public_key: PublicKeyPem
 
 
 class PrivateKeySettings(BaseSettings):
@@ -128,17 +155,12 @@ class AnalysisApiSettings(
 ):
     """Analysis Service HTTP API settings."""
 
-    results_public_url: HttpUrl
-
-    @property
-    def results_base_url(self) -> str:
-        """``results_public_url`` without the trailing slash ``HttpUrl`` may add."""
-        return str(self.results_public_url).rstrip("/")
+    results_public_url: BaseUrl
 
     @property
     def results_origin(self) -> str:
         """Scheme, host and port of ``results_public_url``: where the UI runs."""
-        parts = urlsplit(str(self.results_public_url))
+        parts = urlsplit(self.results_public_url)
         return f"{parts.scheme}://{parts.netloc}"
 
 
@@ -172,14 +194,9 @@ class CourierSettings(
 ):
     """Courier settings."""
 
-    results_service_url: HttpUrl
+    results_service_url: BaseUrl
     delivery_timeout_seconds: Seconds = 10
     courier_prefetch: Limit = 10
-
-    @property
-    def results_service_base_url(self) -> str:
-        """``results_service_url`` without the trailing slash ``HttpUrl`` may add."""
-        return str(self.results_service_url).rstrip("/")
 
 
 class IssueTokenSettings(PrivateKeySettings):

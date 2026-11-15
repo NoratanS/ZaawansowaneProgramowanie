@@ -81,7 +81,7 @@ async def deliver(
 
 
 def build_courier(settings: CourierSettings) -> FastStream:
-    base_url = settings.results_service_base_url
+    base_url = settings.results_service_url
     timeout = settings.delivery_timeout_seconds
     token = CourierToken(settings.jwt_private_key.get_secret_value())
     broker = confirming_broker(settings.rabbitmq_url)
