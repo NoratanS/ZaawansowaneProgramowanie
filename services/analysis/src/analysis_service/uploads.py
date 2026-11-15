@@ -5,9 +5,9 @@ serves them back; the Worker reads them by key instead of over HTTP.
 """
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 from uuid import UUID
 
 from aiobotocore.session import get_session
@@ -26,6 +26,18 @@ class StoredUpload:
     content_type: str
     length: int
     chunks: AsyncIterator[bytes]
+
+
+class UploadStorage(Protocol):
+    """The Upload store: ``UploadStore`` in production, a memory one in tests."""
+
+    async def create_bucket_if_missing(self) -> None: ...
+
+    async def put(self, upload_id: UUID, file: BinaryIO, content_type: str) -> None: ...
+
+    def open(
+        self, upload_id: UUID
+    ) -> AbstractAsyncContextManager[StoredUpload | None]: ...
 
 
 class UploadStore:

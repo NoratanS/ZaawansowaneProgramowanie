@@ -6,9 +6,7 @@ whose ``image_url`` points back at ``GET /uploads/{id}``.
 Run with ``python -m analysis_service.api.main``.
 """
 
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from typing import BinaryIO, Protocol
-from uuid import UUID
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -23,21 +21,9 @@ from analysis_service.queues import (
     confirming_broker,
 )
 from analysis_service.settings import AnalysisApiSettings
-from analysis_service.uploads import StoredUpload, UploadStore, open_store
+from analysis_service.uploads import UploadStorage, UploadStore, open_store
 
 PORT = 8000
-
-
-class UploadStorage(Protocol):
-    """What the API needs from the Upload store (``UploadStore`` in production)."""
-
-    async def create_bucket_if_missing(self) -> None: ...
-
-    async def put(self, upload_id: UUID, file: BinaryIO, content_type: str) -> None: ...
-
-    def open(
-        self, upload_id: UUID
-    ) -> AbstractAsyncContextManager[StoredUpload | None]: ...
 
 
 def create_app(

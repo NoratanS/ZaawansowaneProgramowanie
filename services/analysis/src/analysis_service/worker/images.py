@@ -1,15 +1,39 @@
-"""Fetching and decoding the image an Analysis Job points at."""
+"""Loading and decoding the image an Analysis Job points at.
+
+An upload is read from the Upload store by key; any other URL is fetched
+over HTTP.
+"""
 
 import asyncio
 import ipaddress
 import socket
-from collections.abc import AsyncIterable, Collection
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+)
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import cv2
 import httpx
 import numpy as np
 
 from analysis_service.messages import ErrorCode
+from analysis_service.settings import WorkerSettings
+
+# Lazy: uploads imports ImageFailure from this module.
+lazy from analysis_service.uploads import UploadStorage, open_store, upload_id_in
+
+# Wikimedia answers 403 to the default python-httpx User-Agent; it wants
+# one that names the app and a contact: https://w.wiki/4wJS
+USER_AGENT = (
+    "people-counter/0.1 (+https://github.com/NoratanS/ZaawansowaneProgramowanie)"
+)
+
+LoadImage = Callable[[str], Awaitable[bytes | bytearray]]
+"""Reads the image at a URL; raises ``ImageFailure`` if it can't."""
 
 
 class ImageFailure(Exception):
@@ -19,6 +43,61 @@ class ImageFailure(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+@asynccontextmanager
+async def open_image_source(settings: WorkerSettings) -> AsyncIterator[LoadImage]:
+    """Open the HTTP client and the Upload store; yield ``load`` over them."""
+    async with AsyncExitStack() as stack:
+        # No per-operation timeout: fetch_image enforces the total limit itself,
+        # and httpx's 5 s default would cut it short when the limit is longer.
+        http = await stack.enter_async_context(
+            httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT})
+        )
+        # The API creates the bucket, not the Worker.
+        store = await stack.enter_async_context(open_store(settings))
+        yield image_loader(
+            http,
+            store,
+            public_url=settings.analysis_public_url,
+            max_bytes=settings.image_max_bytes,
+            fetch_timeout_seconds=settings.image_fetch_timeout_seconds,
+            allowed_hosts=settings.image_allowed_hosts,
+        )
+
+
+def image_loader(
+    http: httpx.AsyncClient,
+    store: UploadStorage,
+    *,
+    public_url: str,
+    max_bytes: int,
+    fetch_timeout_seconds: float,
+    allowed_hosts: Collection[str],
+) -> LoadImage:
+    """``load(url)`` over this client and store.
+
+    A bad or missing image raises ``ImageFailure``; a store outage raises as
+    is, so the job is retried.
+    """
+
+    async def load(image_url: str) -> bytearray:
+        # Uploads are read by key, so the SSRF guard has nothing to check.
+        upload_id = upload_id_in(image_url, public_url)
+        if upload_id is not None:
+            async with store.open(upload_id) as upload:
+                if upload is None:
+                    raise ImageFailure("image_unreachable", "the upload does not exist")
+                return await read_capped(upload.chunks, max_bytes, length=upload.length)
+        return await fetch_image(
+            http,
+            image_url,
+            timeout_seconds=fetch_timeout_seconds,
+            max_bytes=max_bytes,
+            allowed_hosts=allowed_hosts,
+        )
+
+    return load
 
 
 async def fetch_image(
