@@ -3,6 +3,8 @@ from uuid import uuid4
 
 import pytest
 
+import result_cases
+
 pytestmark = pytest.mark.e2e
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -67,21 +69,9 @@ def test_post_analyses_with_a_courier_token_is_401(
     assert response.status_code == 401
 
 
-def test_put_results_with_a_client_token_is_401(
-    http, client_token, results_url, images_url
-):
+def test_put_results_with_a_client_token_is_401(http, client_token, results_url):
     job_id = str(uuid4())
-    result = {
-        "job_id": job_id,
-        "image_url": f"{images_url}/tennis-group.jpg",
-        "status": "succeeded",
-        "person_count": 0,
-        "detections": [],
-        "error": None,
-        "model": "yolox-s",
-        "requested_at": "2026-11-08T12:00:00Z",
-        "analyzed_at": "2026-11-08T12:00:01Z",
-    }
+    result = result_cases.load("succeeded-with-zero-people").body | {"job_id": job_id}
 
     response = http.put(
         f"{results_url}/results/{job_id}",

@@ -1,19 +1,11 @@
 import pytest
 
+import result_cases
+
 pytestmark = pytest.mark.integration
 
-JOB_ID = "0b9d6f4e-6a43-4c39-9f53-2f1f0a6f8c11"
-RESULT = {
-    "job_id": JOB_ID,
-    "image_url": "http://images/people.jpg",
-    "status": "succeeded",
-    "person_count": 0,
-    "detections": [],
-    "error": None,
-    "model": "yolox-s",
-    "requested_at": "2026-10-25T12:00:00Z",
-    "analyzed_at": "2026-10-25T12:00:03Z",
-}
+RESULT = result_cases.load("succeeded-with-zero-people").body
+JOB_ID = RESULT["job_id"]
 URL = f"/results/{JOB_ID}"
 
 

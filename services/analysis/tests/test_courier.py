@@ -4,7 +4,6 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from uuid import uuid4
 
 import aio_pika
@@ -14,6 +13,7 @@ from werkzeug import Response
 from analysis_service.courier import build_courier
 from analysis_service.queues import RESULTS_QUEUE
 from analysis_service.settings import CourierSettings
+import result_cases
 
 pytestmark = pytest.mark.integration
 
@@ -69,18 +69,8 @@ def publish_result(publish):
 
     async def publish_one():
         job_id = str(uuid4())
-        now = datetime.now(UTC).isoformat()
-        result = {
-            "job_id": job_id,
-            "image_url": "https://images.example/people.jpg",
-            "status": "succeeded",
-            "person_count": 0,
-            "detections": [],
-            "error": None,
-            "model": "yolox-s",
-            "requested_at": now,
-            "analyzed_at": now,
-        }
+        case = result_cases.load("succeeded-with-zero-people")
+        result = case.body | {"job_id": job_id}
         body = json.dumps(result).encode()
         await publish(body, message_id=job_id)
         return job_id, body

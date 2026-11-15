@@ -1,0 +1,25 @@
+{
+  "body": {
+    "job_id": "0b9d6f4e-6a43-4c39-9f53-2f1f0a6f8c11",
+    "image_url": "http://images/people.jpg",
+    "status": "succeeded",
+    "person_count": 1,
+    "detections": [
+      {
+        "x": 10,
+        "y": 20,
+        "width": 30,
+        "height": 0,
+        "confidence": 0.91
+      }
+    ],
+    "error": null,
+    "model": "yolox-s",
+    "requested_at": "2026-10-25T12:00:00Z",
+    "analyzed_at": "2026-10-25T12:00:03.250000Z"
+  },
+  "expected": {
+    "worker": "reject",
+    "results_service": "reject"
+  }
+}

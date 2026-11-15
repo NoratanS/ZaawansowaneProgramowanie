@@ -1,0 +1,20 @@
+{
+  "body": {
+    "job_id": "0b9d6f4e-6a43-4c39-9f53-2f1f0a6f8c11",
+    "image_url": "https://example.com/cat.txt",
+    "status": "failed",
+    "person_count": 0,
+    "detections": null,
+    "error": {
+      "code": "not_an_image",
+      "message": "The file is not an image."
+    },
+    "model": "yolox-s",
+    "requested_at": "2026-10-25T12:00:00Z",
+    "analyzed_at": "2026-10-25T12:00:01Z"
+  },
+  "expected": {
+    "worker": "reject",
+    "results_service": "reject"
+  }
+}
