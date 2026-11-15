@@ -12,6 +12,7 @@ from analysis_service.api import create_app
 from analysis_service.queues import JOBS_QUEUE, RESULTS_QUEUE
 from analysis_service.settings import AnalysisApiSettings
 from analysis_service.uploads import UPLOADS_BUCKET
+from fakes import FakeJobs, MemoryUploadStore
 
 ANALYSIS_PUBLIC_URL = "http://analysis.example"
 
@@ -77,10 +78,23 @@ async def stored_keys(s3_client):
     return keys
 
 
+def _open_client(app, mint_token, authorized):
+    """An httpx client on ``app``, with a valid client token if ``authorized``."""
+    headers = {}
+    if authorized:
+        headers["Authorization"] = f"Bearer {mint_token('analysis-service')}"
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://analysis",
+        headers=headers,
+    )
+
+
 @pytest.fixture
 def client_for(rabbitmq_url, clean_broker, upload_settings, jwt_keys, mint_token):
     """Open an Analysis Service client with its lifespan running.
 
+    It runs against the real RabbitMQ and S3 adapters, for integration tests.
     The client sends a valid client token unless ``authorized`` is false.
     """
 
@@ -92,15 +106,9 @@ def client_for(rabbitmq_url, clean_broker, upload_settings, jwt_keys, mint_token
             jwt_public_key=jwt_keys.public,
             **upload_settings,
         )
-        headers = {}
-        if authorized:
-            headers["Authorization"] = f"Bearer {mint_token('analysis-service')}"
         app = create_app(settings)
         async with app.router.lifespan_context(app):
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://analysis", headers=headers
-            ) as client:
+            async with _open_client(app, mint_token, authorized) as client:
                 yield client
 
     return open_client
@@ -143,4 +151,50 @@ def next_message(channel):
 @pytest.fixture
 async def anonymous_client(client_for):
     async with client_for(authorized=False) as client:
+        yield client
+
+
+@pytest.fixture
+def fake_jobs():
+    return FakeJobs()
+
+
+@pytest.fixture
+def fake_store():
+    return MemoryUploadStore()
+
+
+@pytest.fixture
+def unit_client_for(fake_jobs, fake_store, jwt_keys, mint_token):
+    """Like ``client_for``, but on the in-memory adapters: no containers."""
+
+    @asynccontextmanager
+    async def open_client(results_public_url="http://results.example", authorized=True):
+        # Nothing connects to these: the injected adapters replace them.
+        settings = AnalysisApiSettings(
+            rabbitmq_url="amqp://unused/",
+            results_public_url=results_public_url,
+            jwt_public_key=jwt_keys.public,
+            s3_endpoint_url="http://unused",
+            s3_access_key="unused",
+            s3_secret_key="unused",
+            analysis_public_url=ANALYSIS_PUBLIC_URL,
+        )
+        app = create_app(settings, jobs=fake_jobs, store=fake_store)
+        async with app.router.lifespan_context(app):
+            async with _open_client(app, mint_token, authorized) as client:
+                yield client
+
+    return open_client
+
+
+@pytest.fixture
+async def unit_client(unit_client_for):
+    async with unit_client_for() as client:
+        yield client
+
+
+@pytest.fixture
+async def unit_anonymous_client(unit_client_for):
+    async with unit_client_for(authorized=False) as client:
         yield client
